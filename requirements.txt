@@ -1,0 +1,6 @@
+# Runtime dependencies. Versions are pinned so every environment —
+# another machine, CI, production — installs exactly what was developed
+# against.
+fastapi==0.139.0
+uvicorn[standard]==0.51.0
+pydantic-settings==2.14.2
