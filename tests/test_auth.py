@@ -66,3 +66,90 @@ def test_register_rejects_invalid_input(
     )
 
     assert response.status_code == 422
+
+
+def test_login_succeeds_with_correct_credentials(client: TestClient) -> None:
+    client.post("/api/auth/register", json=VALID_SIGNUP)
+
+    response = client.post("/api/auth/login", json=VALID_SIGNUP)
+
+    assert response.status_code == 200
+    assert response.json()["email"] == VALID_SIGNUP["email"]
+    assert "fittrack_session" in response.cookies
+
+
+def test_session_cookie_is_not_readable_by_javascript(client: TestClient) -> None:
+    client.post("/api/auth/register", json=VALID_SIGNUP)
+
+    response = client.post("/api/auth/login", json=VALID_SIGNUP)
+
+    set_cookie = response.headers["set-cookie"].lower()
+    assert "httponly" in set_cookie
+    assert "samesite=lax" in set_cookie
+
+
+def test_session_cookie_does_not_contain_the_email(client: TestClient) -> None:
+    # The cookie is signed, not encrypted — anything placed in it is
+    # readable by the client, so it must hold nothing but an opaque id.
+    client.post("/api/auth/register", json=VALID_SIGNUP)
+
+    response = client.post("/api/auth/login", json=VALID_SIGNUP)
+
+    assert VALID_SIGNUP["email"] not in response.cookies["fittrack_session"]
+
+
+@pytest.mark.parametrize(
+    "credentials",
+    [
+        {"email": VALID_SIGNUP["email"], "password": "wrong-password"},
+        {"email": "nobody@example.com", "password": VALID_SIGNUP["password"]},
+    ],
+    ids=["wrong password", "unknown email"],
+)
+def test_login_rejects_bad_credentials(
+    client: TestClient, credentials: dict[str, str]
+) -> None:
+    client.post("/api/auth/register", json=VALID_SIGNUP)
+
+    response = client.post("/api/auth/login", json=credentials)
+
+    assert response.status_code == 401
+    # Identical wording either way, so the response cannot be used to
+    # discover which emails are registered.
+    assert response.json()["detail"] == "Incorrect email or password."
+    assert "fittrack_session" not in response.cookies
+
+
+def test_me_returns_the_signed_in_user(client: TestClient) -> None:
+    client.post("/api/auth/register", json=VALID_SIGNUP)
+    client.post("/api/auth/login", json=VALID_SIGNUP)
+
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 200
+    assert response.json()["email"] == VALID_SIGNUP["email"]
+
+
+def test_me_requires_authentication(client: TestClient) -> None:
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 401
+
+
+def test_me_rejects_a_forged_session_cookie(client: TestClient) -> None:
+    client.post("/api/auth/register", json=VALID_SIGNUP)
+    client.cookies.set("fittrack_session", "not-a-validly-signed-value")
+
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 401
+
+
+def test_logout_ends_the_session(client: TestClient) -> None:
+    client.post("/api/auth/register", json=VALID_SIGNUP)
+    client.post("/api/auth/login", json=VALID_SIGNUP)
+
+    logout = client.post("/api/auth/logout")
+
+    assert logout.status_code == 204
+    assert client.get("/api/auth/me").status_code == 401

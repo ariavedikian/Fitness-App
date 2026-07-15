@@ -31,6 +31,18 @@ class UserCreate(BaseModel):
         return value
 
 
+class UserLogin(BaseModel):
+    """Incoming login payload.
+
+    Deliberately looser than ``UserCreate``: credentials are checked against
+    what is stored, not against today's password policy. Enforcing a minimum
+    length here would lock out existing users the moment the policy changed.
+    """
+
+    email: EmailStr
+    password: str
+
+
 class UserRead(BaseModel):
     """A user account as exposed by the API.
 
