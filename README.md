@@ -32,6 +32,7 @@ python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
 copy .env.example .env    # then set a real SECRET_KEY
+alembic upgrade head      # create the database schema
 ```
 
 ## Run
@@ -43,6 +44,20 @@ uvicorn app.main:app --reload
 - App: http://127.0.0.1:8000
 - Health check: http://127.0.0.1:8000/health
 - Interactive API docs: http://127.0.0.1:8000/docs
+
+## Database migrations
+
+Schema changes are versioned with Alembic. After editing a model:
+
+```powershell
+alembic revision --autogenerate -m "describe the change"   # write the migration
+alembic upgrade head                                       # apply it
+alembic downgrade -1                                       # undo the last one
+alembic current                                            # which revision is applied
+```
+
+Always read the generated migration before applying it — autogenerate is a
+good first draft, not a final answer.
 
 ## Test
 
