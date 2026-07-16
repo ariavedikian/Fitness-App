@@ -5,7 +5,8 @@ Importing every model here ensures they are registered on
 migrations would silently miss tables.
 """
 
+from app.models.food import Food
 from app.models.profile import Profile
 from app.models.user import User
 
-__all__ = ["Profile", "User"]
+__all__ = ["Food", "Profile", "User"]
