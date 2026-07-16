@@ -1,11 +1,17 @@
 """User account model."""
 
+from __future__ import annotations
+
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.models.profile import Profile
 
 
 class User(Base):
@@ -23,6 +29,13 @@ class User(Base):
     # consistent no matter which process inserts the row.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+    # The matching profile, or None until the user fills it in. delete-orphan
+    # means removing a user also removes their profile via the ORM, mirroring
+    # the database's ON DELETE CASCADE.
+    profile: Mapped[Profile | None] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
