@@ -63,3 +63,12 @@ def profile_page(
     if user is None:
         return RedirectResponse("/login", REDIRECT)
     return templates.TemplateResponse(request, "profile.html", {"user": user})
+
+
+@router.get("/foods", response_class=HTMLResponse)
+def foods_page(
+    request: Request, user: User | None = Depends(get_optional_user)
+) -> Response:
+    if user is None:
+        return RedirectResponse("/login", REDIRECT)
+    return templates.TemplateResponse(request, "foods.html", {"user": user})

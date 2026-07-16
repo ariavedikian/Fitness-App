@@ -6,7 +6,8 @@ migrations would silently miss tables.
 """
 
 from app.models.food import Food
+from app.models.log_entry import LogEntry, MealType
 from app.models.profile import Profile
 from app.models.user import User
 
-__all__ = ["Food", "Profile", "User"]
+__all__ = ["Food", "LogEntry", "MealType", "Profile", "User"]

@@ -169,3 +169,46 @@ def calculate_goals(
         calories=calories,
         macros=calculate_macros(calories, macro_split),
     )
+
+
+# --------------------------------------------------------------------------
+# Logged-food nutrition: scaling a food's per-100 g values by an amount eaten.
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Nutrition:
+    """Calories and macros for a specific amount of food."""
+
+    calories: float = 0.0
+    protein_g: float = 0.0
+    carbs_g: float = 0.0
+    fat_g: float = 0.0
+
+    def __add__(self, other: "Nutrition") -> "Nutrition":
+        # Defining addition lets a day's entries be combined with the
+        # built-in sum(), starting from an empty Nutrition().
+        return Nutrition(
+            calories=self.calories + other.calories,
+            protein_g=self.protein_g + other.protein_g,
+            carbs_g=self.carbs_g + other.carbs_g,
+            fat_g=self.fat_g + other.fat_g,
+        )
+
+
+def scale_per_100g(
+    *,
+    calories_per_100g: float,
+    protein_per_100g: float,
+    carbs_per_100g: float,
+    fat_per_100g: float,
+    grams: float,
+) -> Nutrition:
+    """Scale per-100 g nutrition to an arbitrary amount in grams."""
+    factor = grams / 100
+    return Nutrition(
+        calories=calories_per_100g * factor,
+        protein_g=protein_per_100g * factor,
+        carbs_g=carbs_per_100g * factor,
+        fat_g=fat_per_100g * factor,
+    )

@@ -11,12 +11,14 @@ from app.services.nutrition import (
     DailyGoals,
     Goal,
     MacroSplit,
+    Nutrition,
     Sex,
     calculate_bmr,
     calculate_calorie_goal,
     calculate_goals,
     calculate_macros,
     calculate_tdee,
+    scale_per_100g,
 )
 
 
@@ -106,3 +108,33 @@ def test_calculate_goals_composes_the_whole_pipeline() -> None:
     assert goals.calories == 2759
     # Macros derived from the 2759 target, not a fixed number.
     assert goals.macros.protein_g == round(2759 * 0.30 / 4)
+
+
+def test_scale_per_100g_multiplies_by_the_amount() -> None:
+    # 200 g of a 165 kcal / 31 g-protein per-100 g food = 2x.
+    n = scale_per_100g(
+        calories_per_100g=165,
+        protein_per_100g=31,
+        carbs_per_100g=0,
+        fat_per_100g=3.6,
+        grams=200,
+    )
+    assert n.calories == pytest.approx(330)
+    assert n.protein_g == pytest.approx(62)
+    assert n.fat_g == pytest.approx(7.2)
+
+
+def test_nutrition_adds_componentwise() -> None:
+    total = Nutrition(100, 10, 20, 5) + Nutrition(50, 4, 8, 1)
+    assert (total.calories, total.protein_g, total.carbs_g, total.fat_g) == (
+        150,
+        14,
+        28,
+        6,
+    )
+
+
+def test_nutrition_sums_from_empty() -> None:
+    # The empty Nutrition() is the identity that makes sum() work.
+    parts = [Nutrition(100, 10, 20, 5), Nutrition(200, 20, 40, 10)]
+    assert sum(parts, Nutrition()).calories == 300

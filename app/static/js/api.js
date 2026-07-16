@@ -47,7 +47,7 @@ function readDetail(body, status) {
  * @returns {Promise<object|null>} parsed body, or null for 204 responses
  * @throws {ApiError} when the response status is not 2xx
  */
-export async function apiFetch(path, { method = "GET", body } = {}) {
+export async function apiFetch(path, { method = "GET", body, signal } = {}) {
   const response = await fetch(path, {
     method,
     headers: body ? { "Content-Type": "application/json" } : {},
@@ -55,6 +55,9 @@ export async function apiFetch(path, { method = "GET", body } = {}) {
     // Send the session cookie. Same-origin is already the default, but
     // stating it makes the dependency on the cookie explicit.
     credentials: "same-origin",
+    // Lets a caller cancel an in-flight request (used to drop stale
+    // searches). Undefined when not supplied, which fetch simply ignores.
+    signal,
   });
 
   // 204 No Content (our logout) has no body to parse.
