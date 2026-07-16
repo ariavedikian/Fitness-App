@@ -96,6 +96,22 @@ def test_foods_page_renders_for_signed_in_users(client: TestClient) -> None:
     assert "food-search" in response.text
 
 
+def test_diary_page_redirects_anonymous_visitors(client: TestClient) -> None:
+    response = client.get("/diary", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/login"
+
+
+def test_diary_page_renders_for_signed_in_users(client: TestClient) -> None:
+    sign_in(client)
+
+    response = client.get("/diary")
+
+    assert response.status_code == 200
+    assert "diary-content" in response.text
+
+
 def test_pages_are_absent_from_the_api_schema(client: TestClient) -> None:
     # /docs should describe the API, not the website.
     paths = client.get("/openapi.json").json()["paths"]

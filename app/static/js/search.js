@@ -1,6 +1,7 @@
 /** Live food search: type a query, see matching foods with per-serving nutrition. */
 
 import { ApiError, apiFetch } from "./api.js";
+import { openLogDialog } from "./log-dialog.js";
 
 // Below this length, searching is noise ("a" would match half the database).
 const MIN_QUERY_LENGTH = 2;
@@ -34,12 +35,16 @@ function foodItem(food) {
 
   const item = el("li", "food-item");
 
+  // The nutrition text sits in its own body so the Add button can sit beside
+  // it, right-aligned, via the flex layout on .food-item.
+  const body = el("div", "food-item__body");
+
   const head = el("div", "food-item__head");
   head.append(el("span", "food-item__name", food.name));
   if (food.brand) head.append(el("span", "food-item__brand", food.brand));
-  item.append(head);
+  body.append(head);
 
-  item.append(
+  body.append(
     el(
       "p",
       "food-item__serving",
@@ -54,7 +59,13 @@ function foodItem(food) {
       ` · ${s.protein}g protein · ${s.carbs}g carbs · ${s.fat}g fat`,
     ),
   );
-  item.append(macros);
+  body.append(macros);
+  item.append(body);
+
+  const add = el("button", "button button--primary food-item__add", "Add");
+  add.type = "button";
+  add.addEventListener("click", () => openLogDialog(food));
+  item.append(add);
 
   return item;
 }

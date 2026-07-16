@@ -11,15 +11,16 @@
   <div class="card-grid">
     <article class="card">
       <h2 class="card__title">Calories</h2>
-      {# Both states start hidden; dashboard.js reveals whichever applies once
-         the goals request resolves. #}
       <div data-goals-ready hidden>
         <p class="stat">
-          <span data-goal="calories">–</span>
-          <span class="stat__unit">kcal</span>
+          <span data-consumed="calories">–</span>
+          <span class="stat__unit">/ <span data-goal="calories">–</span> kcal</span>
         </p>
+        <div class="progress">
+          <div class="progress__bar" data-progress="calories"></div>
+        </div>
         <p class="card__meta">
-          Daily goal · maintenance <span data-goal="tdee">–</span> kcal
+          <span data-remaining="calories">–</span> kcal remaining
         </p>
       </div>
       <p class="card__empty" data-goals-empty hidden>
@@ -33,15 +34,24 @@
         <ul class="macro-list">
           <li>
             <span class="macro-list__label">Protein</span>
-            <span class="macro-list__value"><span data-goal="protein">–</span> g</span>
+            <span class="macro-list__value">
+              <span data-consumed="protein">–</span> /
+              <span data-goal="protein">–</span> g
+            </span>
           </li>
           <li>
             <span class="macro-list__label">Carbs</span>
-            <span class="macro-list__value"><span data-goal="carbs">–</span> g</span>
+            <span class="macro-list__value">
+              <span data-consumed="carbs">–</span> /
+              <span data-goal="carbs">–</span> g
+            </span>
           </li>
           <li>
             <span class="macro-list__label">Fat</span>
-            <span class="macro-list__value"><span data-goal="fat">–</span> g</span>
+            <span class="macro-list__value">
+              <span data-consumed="fat">–</span> /
+              <span data-goal="fat">–</span> g
+            </span>
           </li>
         </ul>
       </div>
@@ -50,9 +60,15 @@
       </p>
     </article>
 
-    <article class="card card--placeholder">
+    <article class="card">
       <h2 class="card__title">Today's meals</h2>
-      <p class="card__empty">Nothing logged yet.</p>
+      <div data-log-ready hidden>
+        <ul class="mini-list" data-log-list></ul>
+        <a class="card__link" href="/diary">Open diary →</a>
+      </div>
+      <p class="card__empty" data-log-empty hidden>
+        Nothing logged yet. <a href="/foods">Add food</a>.
+      </p>
     </article>
 
     <article class="card card--placeholder">

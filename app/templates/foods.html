@@ -5,7 +5,7 @@
 {% block content %}
   <section class="page-header">
     <h1 class="page-header__title">Food search</h1>
-    <p class="page-header__subtitle">Find a food to see its nutrition.</p>
+    <p class="page-header__subtitle">Find a food and add it to your log.</p>
   </section>
 
   <div class="search">
@@ -17,16 +17,72 @@
       placeholder="Try “chicken” or “banana”…"
       autocomplete="off"
     />
-    {# aria-live lets a screen reader announce "No foods found" and the like
-       as the status text changes. #}
+    <p id="log-status" class="log-status" role="status" aria-live="polite" hidden></p>
     <p id="search-status" class="search-status" role="status" aria-live="polite"></p>
     <div id="search-results"></div>
   </div>
+
+  {# A single dialog, reused for whichever food's "Add" button is clicked.
+     <dialog> gives a modal, backdrop and Esc-to-close with no library. #}
+  <dialog id="log-dialog" class="dialog">
+    <form class="dialog__form">
+      <h2 class="dialog__title" data-food-name></h2>
+      <p class="dialog__hint" data-serving-hint></p>
+      <p class="form-error" data-error hidden></p>
+
+      <div class="field">
+        <label for="log-meal">Meal</label>
+        <select id="log-meal" name="meal" required>
+          <option value="breakfast">Breakfast</option>
+          <option value="lunch">Lunch</option>
+          <option value="dinner">Dinner</option>
+          <option value="snack">Snack</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="log-quantity">Amount</label>
+        <div class="field-row">
+          <input
+            type="number"
+            id="log-quantity"
+            name="quantity"
+            min="0"
+            step="any"
+            inputmode="decimal"
+            required
+          />
+          <select name="unit" aria-label="Unit">
+            <option value="servings">servings</option>
+            <option value="grams">grams</option>
+          </select>
+        </div>
+      </div>
+
+      <p class="dialog__preview"><span data-preview></span></p>
+
+      <div class="dialog__actions">
+        <button type="button" class="button button--ghost" data-cancel>Cancel</button>
+        <button type="submit" class="button button--primary">Log it</button>
+      </div>
+    </form>
+  </dialog>
 {% endblock %}
 
 {% block scripts %}
   <script type="module">
     import { initFoodSearch } from "/static/js/search.js";
+    import { initLogDialog } from "/static/js/log-dialog.js";
+
+    initLogDialog({
+      onLogged: ({ food, grams, meal }) => {
+        const status = document.getElementById("log-status");
+        status.textContent =
+          `Added ${Math.round(grams)} g of ${food.name} to ${meal}. ` +
+          `View it in your diary.`;
+        status.hidden = false;
+      },
+    });
     initFoodSearch();
   </script>
 {% endblock %}
