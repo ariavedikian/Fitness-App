@@ -1,0 +1,72 @@
+"""Tests for the HTML page routes."""
+
+import pytest
+from fastapi.testclient import TestClient
+
+SIGNUP = {"email": "lifter@example.com", "password": "correct-horse-battery"}
+
+
+def sign_in(client: TestClient) -> None:
+    client.post("/api/auth/register", json=SIGNUP)
+
+
+@pytest.mark.parametrize("path", ["/login", "/register"])
+def test_auth_pages_render_for_anonymous_visitors(
+    client: TestClient, path: str
+) -> None:
+    response = client.get(path)
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+
+
+def test_home_sends_anonymous_visitors_to_login(client: TestClient) -> None:
+    response = client.get("/", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/login"
+
+
+def test_home_sends_signed_in_users_to_the_dashboard(client: TestClient) -> None:
+    sign_in(client)
+
+    response = client.get("/", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/dashboard"
+
+
+def test_dashboard_sends_anonymous_visitors_to_login(client: TestClient) -> None:
+    response = client.get("/dashboard", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/login"
+
+
+def test_dashboard_renders_for_signed_in_users(client: TestClient) -> None:
+    sign_in(client)
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    assert SIGNUP["email"] in response.text
+
+
+@pytest.mark.parametrize("path", ["/login", "/register"])
+def test_auth_pages_send_signed_in_users_to_the_dashboard(
+    client: TestClient, path: str
+) -> None:
+    sign_in(client)
+
+    response = client.get(path, follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/dashboard"
+
+
+def test_pages_are_absent_from_the_api_schema(client: TestClient) -> None:
+    # /docs should describe the API, not the website.
+    paths = client.get("/openapi.json").json()["paths"]
+
+    assert "/dashboard" not in paths
+    assert "/api/auth/login" in paths

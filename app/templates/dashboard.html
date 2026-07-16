@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard · FitTrack{% endblock %}
+
+{% block content %}
+  <section class="page-header">
+    <h1 class="page-header__title">Today</h1>
+    <p class="page-header__subtitle">Signed in as {{ user.email }}</p>
+  </section>
+
+  {# Placeholders for the panels the next milestones fill in. Keeping them
+     visible makes the shape of the dashboard obvious as it grows. #}
+  <div class="card-grid">
+    <article class="card card--placeholder">
+      <h2 class="card__title">Calories</h2>
+      <p class="card__empty">
+        Set your goals to see calories remaining for today.
+      </p>
+    </article>
+
+    <article class="card card--placeholder">
+      <h2 class="card__title">Macros</h2>
+      <p class="card__empty">Protein, carbs and fat targets appear here.</p>
+    </article>
+
+    <article class="card card--placeholder">
+      <h2 class="card__title">Today's meals</h2>
+      <p class="card__empty">Nothing logged yet.</p>
+    </article>
+
+    <article class="card card--placeholder">
+      <h2 class="card__title">Workouts</h2>
+      <p class="card__empty">No workouts logged yet.</p>
+    </article>
+  </div>
+{% endblock %}

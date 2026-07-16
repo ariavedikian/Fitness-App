@@ -11,6 +11,9 @@ An API-first, layered monolith. Pages are served as a thin HTML shell; all
 data flows through JSON endpoints under `/api`, so the frontend (or a future
 mobile client) is fully decoupled from the backend.
 
+Features are built as vertical slices — model, service, endpoint and UI
+together — and the CSS is mobile-first throughout.
+
 ```
 app/
 ├── main.py       # app factory & wiring

@@ -21,6 +21,13 @@ def test_register_creates_an_account(client: TestClient) -> None:
     assert body["created_at"]
 
 
+def test_register_signs_the_new_user_in(client: TestClient) -> None:
+    client.post("/api/auth/register", json=VALID_SIGNUP)
+
+    # No separate login step: the session from registering is enough.
+    assert client.get("/api/auth/me").status_code == 200
+
+
 def test_register_never_returns_the_password(client: TestClient) -> None:
     response = client.post("/api/auth/register", json=VALID_SIGNUP)
 

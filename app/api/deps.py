@@ -1,7 +1,8 @@
 """Shared FastAPI dependencies.
 
-``get_current_user`` is the gate every authenticated endpoint goes through:
-declaring it as a dependency is what makes a route private.
+Two ways to ask about the session, because the two surfaces want different
+answers to "nobody is signed in": an API route should say 401, while a page
+should send the visitor to the login screen.
 """
 
 from fastapi import Depends, HTTPException, Request, status
@@ -17,14 +18,13 @@ from app.services import user_service
 SESSION_USER_ID_KEY = "user_id"
 
 
-def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    """Resolve the signed-in user, or reject the request with 401."""
+def get_optional_user(
+    request: Request, db: Session = Depends(get_db)
+) -> User | None:
+    """Resolve the signed-in user, or None if the visitor is anonymous."""
     user_id = request.session.get(SESSION_USER_ID_KEY)
     if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated.",
-        )
+        return None
 
     user = user_service.get_by_id(db, user_id)
     if user is None:
@@ -32,9 +32,18 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
         # Drop the session rather than leaving the client in a state where
         # every request fails.
         request.session.clear()
+        return None
+
+    return user
+
+
+def get_current_user(
+    user: User | None = Depends(get_optional_user),
+) -> User:
+    """Require a signed-in user. Declaring this makes an API route private."""
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated.",
         )
-
     return user

@@ -18,14 +18,23 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
     status_code=status.HTTP_201_CREATED,
     summary="Create a new user account",
 )
-def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
+def register(
+    payload: UserCreate, request: Request, db: Session = Depends(get_db)
+) -> User:
     try:
-        return user_service.create_user(db, payload)
+        user = user_service.create_user(db, payload)
     except user_service.EmailAlreadyRegisteredError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An account with that email already exists.",
         ) from exc
+
+    # Signing up signs you in — the alternative is bouncing a brand-new user
+    # to a login form to retype the password they just chose.
+    request.session.clear()
+    request.session[SESSION_USER_ID_KEY] = user.id
+
+    return user
 
 
 @router.post(

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Create account · FitTrack{% endblock %}
+
+{% block content %}
+  <div class="auth-card card">
+    <h1 class="auth-card__title">Create your account</h1>
+    <p class="auth-card__subtitle">Start tracking meals and workouts today.</p>
+
+    <form id="register-form" novalidate>
+      <p class="form-error" data-error hidden></p>
+
+      <div class="field">
+        <label for="email">Email</label>
+        <input
+          type="email"
+          id="email"
+          name="email"
+          autocomplete="email"
+          required
+        />
+      </div>
+
+      <div class="field">
+        <label for="password">Password</label>
+        <input
+          type="password"
+          id="password"
+          name="password"
+          autocomplete="new-password"
+          required
+          minlength="8"
+        />
+        <p class="field__hint">At least 8 characters.</p>
+      </div>
+
+      <button type="submit" class="button button--primary button--block">
+        Create account
+      </button>
+    </form>
+
+    <p class="auth-card__footer">
+      Already have an account? <a href="/login">Log in</a>
+    </p>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script type="module">
+    import { wireAuthForm } from "/static/js/auth.js";
+
+    wireAuthForm({
+      formId: "register-form",
+      endpoint: "/api/auth/register",
+      redirectTo: "/dashboard",
+      pendingLabel: "Creating account…",
+    });
+  </script>
+{% endblock %}

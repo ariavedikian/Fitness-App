@@ -5,10 +5,12 @@ factory so tests can construct fresh, isolated instances.
 """
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.api import auth, health
+from app.api import auth, health, pages
 from app.core.config import settings
+from app.core.templates import STATIC_DIR
 
 
 def create_app() -> FastAPI:
@@ -32,8 +34,11 @@ def create_app() -> FastAPI:
         same_site="lax",
     )
 
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(pages.router)
 
     return app
 
