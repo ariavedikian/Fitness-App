@@ -8,19 +8,46 @@
     <p class="page-header__subtitle">Signed in as {{ user.email }}</p>
   </section>
 
-  {# Placeholders for the panels the next milestones fill in. Keeping them
-     visible makes the shape of the dashboard obvious as it grows. #}
   <div class="card-grid">
-    <article class="card card--placeholder">
+    <article class="card">
       <h2 class="card__title">Calories</h2>
-      <p class="card__empty">
-        Set your goals to see calories remaining for today.
+      {# Both states start hidden; dashboard.js reveals whichever applies once
+         the goals request resolves. #}
+      <div data-goals-ready hidden>
+        <p class="stat">
+          <span data-goal="calories">–</span>
+          <span class="stat__unit">kcal</span>
+        </p>
+        <p class="card__meta">
+          Daily goal · maintenance <span data-goal="tdee">–</span> kcal
+        </p>
+      </div>
+      <p class="card__empty" data-goals-empty hidden>
+        <a href="/profile">Set up your profile</a> to see your calorie goal.
       </p>
     </article>
 
-    <article class="card card--placeholder">
+    <article class="card">
       <h2 class="card__title">Macros</h2>
-      <p class="card__empty">Protein, carbs and fat targets appear here.</p>
+      <div data-goals-ready hidden>
+        <ul class="macro-list">
+          <li>
+            <span class="macro-list__label">Protein</span>
+            <span class="macro-list__value"><span data-goal="protein">–</span> g</span>
+          </li>
+          <li>
+            <span class="macro-list__label">Carbs</span>
+            <span class="macro-list__value"><span data-goal="carbs">–</span> g</span>
+          </li>
+          <li>
+            <span class="macro-list__label">Fat</span>
+            <span class="macro-list__value"><span data-goal="fat">–</span> g</span>
+          </li>
+        </ul>
+      </div>
+      <p class="card__empty" data-goals-empty hidden>
+        <a href="/profile">Set up your profile</a> to see macro targets.
+      </p>
     </article>
 
     <article class="card card--placeholder">
@@ -33,4 +60,11 @@
       <p class="card__empty">No workouts logged yet.</p>
     </article>
   </div>
+{% endblock %}
+
+{% block scripts %}
+  <script type="module">
+    import { initDashboard } from "/static/js/dashboard.js";
+    initDashboard();
+  </script>
 {% endblock %}

@@ -64,6 +64,22 @@ def test_auth_pages_send_signed_in_users_to_the_dashboard(
     assert response.headers["location"] == "/dashboard"
 
 
+def test_profile_page_redirects_anonymous_visitors(client: TestClient) -> None:
+    response = client.get("/profile", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/login"
+
+
+def test_profile_page_renders_for_signed_in_users(client: TestClient) -> None:
+    sign_in(client)
+
+    response = client.get("/profile")
+
+    assert response.status_code == 200
+    assert "profile-form" in response.text
+
+
 def test_pages_are_absent_from_the_api_schema(client: TestClient) -> None:
     # /docs should describe the API, not the website.
     paths = client.get("/openapi.json").json()["paths"]

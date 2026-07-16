@@ -54,3 +54,12 @@ def dashboard_page(
     if user is None:
         return RedirectResponse("/login", REDIRECT)
     return templates.TemplateResponse(request, "dashboard.html", {"user": user})
+
+
+@router.get("/profile", response_class=HTMLResponse)
+def profile_page(
+    request: Request, user: User | None = Depends(get_optional_user)
+) -> Response:
+    if user is None:
+        return RedirectResponse("/login", REDIRECT)
+    return templates.TemplateResponse(request, "profile.html", {"user": user})
