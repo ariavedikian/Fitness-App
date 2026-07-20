@@ -1,20 +1,22 @@
-"""Seed the foods table with common reference foods.
+"""Seed the reference catalogues (foods and exercises).
 
 Run after migrating:
 
     python -m app.db.seed
 
-Idempotent: a food already present (matched on name + brand) is skipped, so
-re-running after adding new entries only inserts the new ones. Reference data
-lives in a seed script rather than a migration because it is content, not
-schema — you may want to reshape or reload it without touching table history.
+Idempotent: an entry already present (foods matched on name + brand, exercises
+on name) is skipped, so re-running after adding new rows only inserts the new
+ones. Reference data lives in a seed script rather than a migration because it
+is content, not schema — you may want to reshape or reload it without touching
+table history.
 """
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
-from app.models import Food
+from app.models import Exercise, Food
+from app.services.workout import ExerciseType
 
 # name, brand, kcal, protein, carbs, fat, serving_g, serving_label
 #   — nutrition values are per 100 g.
@@ -52,7 +54,7 @@ _FOODS: list[tuple[str, str | None, float, float, float, float, float, str]] = [
 ]
 
 
-def _exists(db: Session, name: str, brand: str | None) -> bool:
+def _food_exists(db: Session, name: str, brand: str | None) -> bool:
     stmt = select(Food.id).where(Food.name == name)
     stmt = (
         stmt.where(Food.brand.is_(None))
@@ -66,7 +68,7 @@ def seed_foods(db: Session) -> int:
     """Insert any reference foods not already present. Returns how many added."""
     added = 0
     for name, brand, kcal, protein, carbs, fat, serving_g, label in _FOODS:
-        if _exists(db, name, brand):
+        if _food_exists(db, name, brand):
             continue
         db.add(
             Food(
@@ -86,12 +88,77 @@ def seed_foods(db: Session) -> int:
     return added
 
 
+# name, type, MET, muscle_group.
+#   - Cardio rows carry a MET (kcal per kg per hour) for calorie estimation and
+#     no muscle group; strength rows carry a muscle group and no MET (we don't
+#     estimate strength calories — there's no duration to base them on).
+#   - MET values follow the Compendium of Physical Activities (rounded).
+_C = ExerciseType.CARDIO
+_S = ExerciseType.STRENGTH
+_EXERCISES: list[tuple[str, ExerciseType, float | None, str | None]] = [
+    # Cardio
+    ("Running", _C, 9.8, None),
+    ("Walking", _C, 3.5, None),
+    ("Cycling", _C, 7.5, None),
+    ("Swimming", _C, 7.0, None),
+    ("Rowing Machine", _C, 7.0, None),
+    ("Elliptical Trainer", _C, 5.0, None),
+    ("Stair Climbing", _C, 8.0, None),
+    ("Jump Rope", _C, 12.3, None),
+    ("Hiking", _C, 6.0, None),
+    ("HIIT", _C, 8.0, None),
+    ("Boxing", _C, 7.8, None),
+    ("Dancing", _C, 5.0, None),
+    ("Yoga", _C, 2.5, None),
+    ("Elliptical Intervals", _C, 6.8, None),
+    # Strength
+    ("Bench Press", _S, None, "Chest"),
+    ("Push-up", _S, None, "Chest"),
+    ("Dumbbell Fly", _S, None, "Chest"),
+    ("Squat", _S, None, "Legs"),
+    ("Lunge", _S, None, "Legs"),
+    ("Leg Press", _S, None, "Legs"),
+    ("Leg Curl", _S, None, "Legs"),
+    ("Deadlift", _S, None, "Back"),
+    ("Bent-over Row", _S, None, "Back"),
+    ("Pull-up", _S, None, "Back"),
+    ("Lat Pulldown", _S, None, "Back"),
+    ("Overhead Press", _S, None, "Shoulders"),
+    ("Bicep Curl", _S, None, "Arms"),
+    ("Tricep Extension", _S, None, "Arms"),
+    ("Plank", _S, None, "Core"),
+    ("Crunch", _S, None, "Core"),
+]
+
+
+def _exercise_exists(db: Session, name: str) -> bool:
+    return db.scalar(select(Exercise.id).where(Exercise.name == name)) is not None
+
+
+def seed_exercises(db: Session) -> int:
+    """Insert any reference exercises not already present. Returns how many added."""
+    added = 0
+    for name, type_, met, muscle_group in _EXERCISES:
+        if _exercise_exists(db, name):
+            continue
+        db.add(Exercise(name=name, type=type_, met=met, muscle_group=muscle_group))
+        added += 1
+
+    db.commit()
+    return added
+
+
 def main() -> None:
     db = SessionLocal()
     try:
-        added = seed_foods(db)
-        total = db.scalar(select(func.count()).select_from(Food))
-        print(f"Seeded {added} new food(s); {total} total in the database.")
+        foods_added = seed_foods(db)
+        foods_total = db.scalar(select(func.count()).select_from(Food))
+        exercises_added = seed_exercises(db)
+        exercises_total = db.scalar(select(func.count()).select_from(Exercise))
+        print(
+            f"Seeded {foods_added} new food(s); {foods_total} total.\n"
+            f"Seeded {exercises_added} new exercise(s); {exercises_total} total."
+        )
     finally:
         db.close()
 
