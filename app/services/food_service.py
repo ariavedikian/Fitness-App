@@ -18,21 +18,13 @@ from app.models import Food
 from app.schemas.food import FoodSearchResponse, FoodSearchResult
 from app.services import off_client
 from app.services.off_client import OffFood, OffUnavailableError
+from app.services.search import escape_like
 
 MAX_RESULTS = 20
 
 
 class OffProductNotFoundError(Exception):
     """Raised when an ``off_id`` has no usable product on Open Food Facts."""
-
-
-def _escape_like(term: str) -> str:
-    """Escape LIKE wildcards so a user's ``%`` or ``_`` matches literally.
-
-    Without this, searching "100%" would translate to a pattern where ``%``
-    means "any characters" and match every row in the table.
-    """
-    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def search_foods(
@@ -47,7 +39,7 @@ def search_foods(
     if not term:
         return []
 
-    escaped = _escape_like(term)
+    escaped = escape_like(term)
     contains = f"%{escaped}%"
     starts_with = f"{escaped}%"
 

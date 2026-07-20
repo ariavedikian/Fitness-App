@@ -10,5 +10,14 @@ from app.models.food import Food
 from app.models.log_entry import LogEntry, MealType
 from app.models.profile import Profile
 from app.models.user import User
+from app.models.workout_entry import WorkoutEntry
 
-__all__ = ["Exercise", "Food", "LogEntry", "MealType", "Profile", "User"]
+__all__ = [
+    "Exercise",
+    "Food",
+    "LogEntry",
+    "MealType",
+    "Profile",
+    "User",
+    "WorkoutEntry",
+]
