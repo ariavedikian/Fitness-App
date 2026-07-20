@@ -30,7 +30,7 @@ function el(tag, className, text) {
   return node;
 }
 
-function foodItem(food) {
+function foodItem(food, onAdd) {
   const s = perServing(food);
 
   const item = el("li", "food-item");
@@ -42,6 +42,11 @@ function foodItem(food) {
   const head = el("div", "food-item__head");
   head.append(el("span", "food-item__name", food.name));
   if (food.brand) head.append(el("span", "food-item__brand", food.brand));
+  // Tag external hits so it's clear which foods come from Open Food Facts (and
+  // will be imported on Add) versus our own curated database.
+  if (food.source === "off") {
+    head.append(el("span", "food-item__source", "Open Food Facts"));
+  }
   body.append(head);
 
   body.append(
@@ -64,7 +69,7 @@ function foodItem(food) {
 
   const add = el("button", "button button--primary food-item__add", "Add");
   add.type = "button";
-  add.addEventListener("click", () => openLogDialog(food));
+  add.addEventListener("click", () => onAdd(food, add));
   item.append(add);
 
   return item;
@@ -74,36 +79,90 @@ export function initFoodSearch() {
   const input = document.getElementById("food-search");
   const results = document.getElementById("search-results");
   const status = document.getElementById("search-status");
-  if (!input || !results || !status) return;
+  const notice = document.getElementById("search-notice");
+  if (!input || !results || !status || !notice) return;
 
   let timer;
   let controller;
 
+  /** A banner that sits *beside* the results (unlike showStatus, which replaces
+   *  them): used to flag a degraded external source or a failed import. Pass no
+   *  text to hide it. `tone` picks the colour ("warn" or "error"). */
+  function setNotice(message, tone = "warn") {
+    if (!message) {
+      notice.hidden = true;
+      notice.className = "search-notice";
+      return;
+    }
+    notice.textContent = message;
+    notice.className = `search-notice search-notice--${tone}`;
+    notice.hidden = false;
+  }
+
   function showStatus(message) {
     results.replaceChildren();
+    setNotice(null);
     status.textContent = message;
     status.hidden = false;
   }
 
-  function showResults(foods) {
+  function showResults(hits, external) {
     status.hidden = true;
+    // Only "unavailable" warrants a notice: "disabled" is a deliberate config
+    // choice and "ok" needs no explanation.
+    setNotice(
+      external === "unavailable"
+        ? "Open Food Facts is unavailable — showing your foods only."
+        : null,
+    );
     const list = el("ul", "food-list");
-    for (const food of foods) list.append(foodItem(food));
+    for (const food of hits) list.append(foodItem(food, importAndLog));
     results.replaceChildren(list);
+  }
+
+  /** Handle an Add click. A local food opens the log dialog directly; an Open
+   *  Food Facts hit is imported first (the server re-fetches and persists it),
+   *  then the same dialog opens with the now-local food. */
+  async function importAndLog(food, button) {
+    if (food.source === "local") {
+      openLogDialog(food);
+      return;
+    }
+
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = "Adding…";
+    try {
+      const local = await apiFetch("/api/foods/import", {
+        method: "POST",
+        body: { off_id: food.off_id },
+      });
+      openLogDialog(local);
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      setNotice(error.detail, "error");
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+    }
   }
 
   async function run(query) {
     controller = new AbortController();
     try {
-      const foods = await apiFetch(
+      const { results: hits, external } = await apiFetch(
         `/api/foods/search?q=${encodeURIComponent(query)}`,
         { signal: controller.signal },
       );
-      if (foods.length === 0) {
-        showStatus(`No foods found for “${query}”.`);
+      if (hits.length === 0) {
+        showStatus(
+          external === "unavailable"
+            ? `Open Food Facts is unavailable, and no local foods match “${query}”.`
+            : `No foods found for “${query}”.`,
+        );
         return;
       }
-      showResults(foods);
+      showResults(hits, external);
     } catch (error) {
       // A newer keystroke aborted this request — its results are stale, so
       // ignore it and let the newer one win.

@@ -425,6 +425,26 @@ a {
   font-size: 0.9375rem;
 }
 
+.search-notice {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+}
+
+/* Informational (e.g. Open Food Facts unreachable): neutral, not alarming. */
+.search-notice--warn {
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+/* An action failed (e.g. an import): use the danger tone. */
+.search-notice--error {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
 .food-list {
   margin: var(--space-4) 0 var(--space-7);
   padding: 0;
@@ -469,6 +489,19 @@ a {
 .food-item__brand {
   font-size: 0.8125rem;
   color: var(--color-text-muted);
+}
+
+/* A small tag marking a result that came from Open Food Facts. */
+.food-item__source {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0.05rem var(--space-2);
 }
 
 .food-item__serving {

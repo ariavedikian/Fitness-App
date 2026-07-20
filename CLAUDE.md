@@ -35,6 +35,7 @@ engineer and mentor, not a code generator:
 - **Templating:** Jinja2 (server renders HTML shells only)
 - **Frontend:** vanilla HTML/CSS/JS as **ES modules** — no framework, no build step
 - **Tests:** pytest + FastAPI `TestClient` (httpx)
+- **Outbound HTTP:** httpx (sync `Client`) for the Open Food Facts integration.
 - Always work inside the **virtualenv** at `venv/`.
 
 ## Architecture
@@ -80,7 +81,8 @@ fitness-app/
 │   │   └── seed.py          # `python -m app.db.seed` — idempotent food seed data
 │   ├── models/              # SQLAlchemy models: user, profile, food, log_entry
 │   ├── schemas/             # Pydantic shapes: user, profile, food, log
-│   ├── services/            # business logic: user, profile, food, log, nutrition
+│   ├── services/            # business logic: user, profile, food, log, nutrition,
+│   │                        #   off_client (Open Food Facts adapter + HTTP)
 │   ├── api/                 # routers: auth, profile, foods, log, pages, health, deps
 │   ├── static/{css,js}/     # main.css (design tokens); ES modules per feature
 │   └── templates/           # base + page templates (Jinja2)
@@ -127,6 +129,20 @@ fitness-app/
     email/password.
 14. **Server owns data, client owns presentation** — the API returns canonical
     values; the browser does display math (per-serving, remaining, imperial).
+15. **External data crosses an adapter** — `map_off_product` is a pure function
+    that normalises Open Food Facts' messy JSON into our shape and rejects
+    unusable products, so the mess is quarantined in one tested place and the
+    rest of the app only ever sees clean `OffFood`/`Food` values.
+16. **Materialise external foods on log, not on search** — an OFF result carries
+    a barcode but no local `id`; it becomes a `Food` row only when the user adds
+    it (`import`), deduped on the unique `off_id`. Search stays read-only and the
+    DB fills with foods people actually use. The server **re-fetches** at import
+    time so persisted nutrition is ours, not the client's (extends #14).
+17. **Degrade, don't break, on third-party failure** — OFF is flaky (intermittent
+    503s, occasional outages). The client retries transient errors; the search
+    service catches `OffUnavailableError` and returns local results with an
+    `external` status the UI surfaces, so an outage narrows the feature instead
+    of erroring the page.
 
 ## Coding conventions
 
@@ -161,7 +177,7 @@ fitness-app/
 - Assert real behavior (e.g. duplicate insert raises `IntegrityError`), and
   hand-compute expected numbers in comments for domain math.
 
-## Completed features (milestones 1–6)
+## Completed features (milestones 1–7)
 
 1. **Foundation** — venv, config system, `/health`, pytest, git.
 2. **DB + auth** — `User` model; register / login / logout / `me`; bcrypt; sessions.
@@ -176,20 +192,29 @@ fitness-app/
    `POST/GET/DELETE /api/log` with day totals; log-from-search `<dialog>`;
    `/diary` page (grouped by meal, delete, totals-vs-goals); dashboard cards show
    consumed-vs-goal + progress bar + today's meals.
+7. **External nutrition API (Open Food Facts)** — hybrid search over our local DB
+   **plus** millions of OFF products, no API key. `off_client.py` is an adapter:
+   pure `map_off_product` normalises OFF's messy JSON (kJ→kcal, missing servings,
+   comma decimals) into an `OffFood`, and a sync `httpx` client (`search_off` /
+   `fetch_off_product`) retries OFF's intermittent 503s. `Food` gains a unique
+   `off_id` (barcode). `search_all` merges local-first, dedupes OFF against
+   already-imported barcodes, and **degrades gracefully** when OFF is down
+   (`FoodSearchResponse.external` = ok/unavailable/disabled). Foods are
+   **materialised on Add**: `POST /api/foods/import` re-fetches server-side (never
+   trusting client numbers) and get-or-creates the local `Food`; the existing log
+   flow is unchanged. Search UI tags OFF hits, shows a degraded-source notice, and
+   imports before logging.
 
 ## Planned milestones (next → later)
 
-- **NEXT — External nutrition API (Open Food Facts):** hybrid approach — search
-  the API live and persist a food locally only when it's logged (snapshot makes
-  this clean). New concepts: outbound async HTTP client, mapping the external
-  response into our `FoodRead` shape (adapter pattern), handling a slow/down third
-  party. No API key needed for Open Food Facts. USDA FoodData Central can be added
-  later for better whole-food data (needs a free key).
-- **Workout logging** — exercises with sets/reps/weight or duration/calories.
+- **NEXT — Workout logging** — exercises with sets/reps/weight or duration/calories.
 - **Progress tracking** — body-weight entries over time.
 - **Charts & analytics** — weight/calorie/macro trends.
 - **AI features** — meal recommendations, photo calorie estimation, personalized
   workout recommendations.
+- **Later food-data enhancements** — USDA FoodData Central as a second source
+  (better whole-food data; needs a free key), and barcode-scan lookup (the OFF
+  `fetch_off_product` path already supports barcodes).
 
 ## How to run
 
@@ -210,12 +235,19 @@ alembic upgrade head
 
 ## Current state
 
-- **87 tests passing.** Four migrations applied (users → profiles → foods →
-  log_entries).
+- **120 tests passing.** Five migrations applied (users → profiles → foods →
+  log_entries → foods.off_id).
+- **External calls in tests are disabled by default** via an autouse `_offline`
+  fixture in `tests/conftest.py` (sets `settings.off_enabled = False`); tests that
+  exercise the OFF path re-enable it and stub `off_client` — nothing hits the
+  network. OFF search uses a **sync** `httpx.Client` (chosen over the originally
+  planned async, for consistency with the sync route/DB stack).
 - **Dev accounts in `fittrack.db`** (created while testing; safe to ignore or
   delete the DB and re-migrate/re-seed for a clean slate):
-  - `demo@example.com` / `correct-horse-battery` — has a profile + a logged entry.
+  - `demo@example.com` / `correct-horse-battery` — has a profile + logged entries,
+    plus one OFF food imported during M7 testing (`off_id` set — exercises dedupe).
   - `newbie@example.com` / `another-good-password` — no profile (exercises empty
     states).
-- Milestone 6 is complete and committed-ready. **Resume at the External nutrition
-  API milestone** (see above).
+- A dev-server launch config lives at the **workspace-root** `.claude/launch.json`
+  (one level above this repo), used by the browser preview tooling.
+- Milestone 7 is complete and committed-ready. **Resume at Workout logging.**

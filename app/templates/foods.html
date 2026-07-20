@@ -19,6 +19,9 @@
     />
     <p id="log-status" class="log-status" role="status" aria-live="polite" hidden></p>
     <p id="search-status" class="search-status" role="status" aria-live="polite"></p>
+    {# Sits alongside results (unlike search-status, which replaces them) to
+       flag when Open Food Facts is down or an import failed. #}
+    <p id="search-notice" class="search-notice" role="status" aria-live="polite" hidden></p>
     <div id="search-results"></div>
   </div>
 
