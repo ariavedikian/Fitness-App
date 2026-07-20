@@ -39,6 +39,24 @@ class Settings(BaseSettings):
     # and login would appear to silently fail.
     session_https_only: bool = False
 
+    # --- Open Food Facts (external nutrition database) ---
+    # A free, open food database (millions of products, no API key). When
+    # disabled, food search falls back to our local database only — handy for
+    # tests and offline development so neither depends on a third party.
+    off_enabled: bool = True
+    off_base_url: str = "https://world.openfoodfacts.org"
+    off_timeout_seconds: float = 6.0
+    # Their public full-text search (`search.pl`) is intermittently throttled
+    # and answers 503 at random even when healthy, so requests retry briefly
+    # before giving up rather than surfacing a transient blip to the user.
+    off_max_retries: int = 2
+    off_retry_backoff_seconds: float = 0.25
+    off_search_page_size: int = 20
+    # OFF asks callers to send a descriptive User-Agent identifying the app.
+    # Add a contact (email/URL) via .env if running this against their live
+    # service in earnest; kept generic here so nothing personal is committed.
+    off_user_agent: str = "FitTrack/0.1 (mentoring project)"
+
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",

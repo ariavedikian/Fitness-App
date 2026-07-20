@@ -1,5 +1,6 @@
 # Development-only dependencies (testing, tooling). Kept separate so
 # production images install only requirements.txt.
+# (httpx moved to requirements.txt — it's now a runtime dependency for the
+# Open Food Facts integration.)
 -r requirements.txt
 pytest==9.1.1
-httpx==0.28.1

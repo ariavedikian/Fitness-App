@@ -13,9 +13,21 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401  (registers every model on Base.metadata)
+from app.core.config import settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
+
+
+@pytest.fixture(autouse=True)
+def _offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never touch the real Open Food Facts API from the test suite.
+
+    OFF is disabled by default so hybrid search runs local-only and no test
+    depends on a live third party. Tests that exercise the OFF path re-enable
+    it and stub ``off_client.search_off`` / ``fetch_off_product`` themselves.
+    """
+    monkeypatch.setattr(settings, "off_enabled", False)
 
 
 @pytest.fixture

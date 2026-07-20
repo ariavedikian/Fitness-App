@@ -10,3 +10,7 @@ bcrypt==5.0.0
 email-validator==2.3.0
 itsdangerous==2.2.0
 jinja2==3.1.6
+# Outbound HTTP client for the Open Food Facts integration. Also used by the
+# test suite (FastAPI's TestClient is built on it), so it lives here at runtime
+# rather than in requirements-dev.txt.
+httpx==0.28.1
