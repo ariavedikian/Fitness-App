@@ -76,14 +76,16 @@ fitness-app/
 │   │   ├── security.py      # bcrypt hash_password / verify_password
 │   │   └── templates.py     # shared Jinja2 + static dir paths
 │   ├── db/
-│   │   ├── base.py          # DeclarativeBase `Base`
+│   │   ├── base.py          # DeclarativeBase `Base` + enum_column helper
 │   │   ├── session.py       # engine, SessionLocal, get_db() dependency
-│   │   └── seed.py          # `python -m app.db.seed` — idempotent food seed data
-│   ├── models/              # SQLAlchemy models: user, profile, food, log_entry
-│   ├── schemas/             # Pydantic shapes: user, profile, food, log
+│   │   └── seed.py          # `python -m app.db.seed` — idempotent food + exercise seed
+│   ├── models/              # user, profile, food, log_entry, exercise, workout_entry
+│   ├── schemas/             # Pydantic shapes: user, profile, food, log, workout
 │   ├── services/            # business logic: user, profile, food, log, nutrition,
-│   │                        #   off_client (Open Food Facts adapter + HTTP)
-│   ├── api/                 # routers: auth, profile, foods, log, pages, health, deps
+│   │                        #   off_client (OFF adapter), search (LIKE-escape),
+│   │                        #   exercise, workout (MET math), workout_service
+│   ├── api/                 # routers: auth, profile, foods, log, exercises,
+│   │                        #   workouts, pages, health, deps
 │   ├── static/{css,js}/     # main.css (design tokens); ES modules per feature
 │   └── templates/           # base + page templates (Jinja2)
 ├── alembic/                 # migrations (env.py reads DATABASE_URL from settings)
@@ -143,6 +145,14 @@ fitness-app/
     service catches `OffUnavailableError` and returns local results with an
     `external` status the UI surfaces, so an outage narrows the feature instead
     of erroring the page.
+18. **One table, a type discriminator, nullable columns** — `WorkoutEntry` holds
+    both strength and cardio in one table (a `type` plus nullable metric columns)
+    rather than separate tables. The schema layer can't enforce which metrics are
+    required (that depends on the exercise's type, a DB lookup), so the *service*
+    validates against the type and clears the columns that don't apply.
+19. **Net calories add exercise back to the budget** — the dashboard shows
+    `remaining = goal − eaten + burned` (MyFitnessPal's model): logging a workout
+    lets you eat more. Only calories net out; macros stay consumed-vs-goal.
 
 ## Coding conventions
 
@@ -177,7 +187,7 @@ fitness-app/
 - Assert real behavior (e.g. duplicate insert raises `IntegrityError`), and
   hand-compute expected numbers in comments for domain math.
 
-## Completed features (milestones 1–7)
+## Completed features (milestones 1–8)
 
 1. **Foundation** — venv, config system, `/health`, pytest, git.
 2. **DB + auth** — `User` model; register / login / logout / `me`; bcrypt; sessions.
@@ -204,11 +214,22 @@ fitness-app/
    trusting client numbers) and get-or-creates the local `Food`; the existing log
    flow is unchanged. Search UI tags OFF hits, shows a degraded-source notice, and
    imports before logging.
+8. **Workout logging + dashboard net calories** — the nutrition pattern applied to
+   exercise. `Exercise` catalogue (30 seeded, cardio carries a MET, strength a
+   muscle group); pure `workout.py` estimates calories burned (`kcal = MET ×
+   weight_kg × hours`). One `WorkoutEntry` table holds both shapes — a `type`
+   discriminator with nullable strength (sets/reps/weight) and cardio
+   (duration/distance) columns — snapshotting the exercise like meal logging. The
+   service validates metrics against the type and estimates cardio calories from
+   the profile's weight (degrading to none without a profile). `GET
+   /api/exercises/search`; `POST/GET/DELETE /api/workouts`. `/workouts` page:
+   search → type-aware `<dialog>` → today's list. Dashboard folds burned calories
+   in as **net calories** (remaining = goal − eaten + burned, MyFitnessPal-style;
+   macros untouched).
 
 ## Planned milestones (next → later)
 
-- **NEXT — Workout logging** — exercises with sets/reps/weight or duration/calories.
-- **Progress tracking** — body-weight entries over time.
+- **NEXT — Progress tracking** — body-weight entries over time.
 - **Charts & analytics** — weight/calorie/macro trends.
 - **AI features** — meal recommendations, photo calorie estimation, personalized
   workout recommendations.
@@ -222,7 +243,7 @@ fitness-app/
 .\venv\Scripts\Activate.ps1          # activate the virtualenv
 pip install -r requirements-dev.txt  # first time / after dep changes
 alembic upgrade head                 # apply migrations (creates fittrack.db)
-python -m app.db.seed                # load the 30 reference foods
+python -m app.db.seed                # load reference foods + exercises
 uvicorn app.main:app --reload        # http://127.0.0.1:8000  (docs at /docs)
 pytest                               # run the test suite
 ```
@@ -235,8 +256,8 @@ alembic upgrade head
 
 ## Current state
 
-- **120 tests passing.** Five migrations applied (users → profiles → foods →
-  log_entries → foods.off_id).
+- **151 tests passing.** Seven migrations applied (users → profiles → foods →
+  log_entries → foods.off_id → exercises → workout_entries).
 - **External calls in tests are disabled by default** via an autouse `_offline`
   fixture in `tests/conftest.py` (sets `settings.off_enabled = False`); tests that
   exercise the OFF path re-enable it and stub `off_client` — nothing hits the
@@ -250,4 +271,8 @@ alembic upgrade head
     states).
 - A dev-server launch config lives at the **workspace-root** `.claude/launch.json`
   (one level above this repo), used by the browser preview tooling.
-- Milestone 7 is complete and committed-ready. **Resume at Workout logging.**
+- **Known gap:** static assets (`/static/js/*.js`, CSS) are served by `StaticFiles`
+  with no cache headers, so browsers can run a **stale cached** copy after a change
+  (bit us verifying M8's dashboard.js). Needs cache-busting/versioned asset URLs —
+  tracked as a follow-up task.
+- Milestone 8 is complete and committed-ready. **Resume at Progress tracking.**
