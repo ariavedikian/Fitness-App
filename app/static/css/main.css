@@ -915,6 +915,15 @@ a {
   font-size: 0.9375rem;
 }
 
+/* A decorative mini-trend on the dashboard weight card. */
+.sparkline {
+  display: block;
+  width: 100%;
+  max-width: 10rem;
+  height: auto;
+  margin-top: var(--space-3);
+}
+
 /* --------------------------------------------------------- analytics range */
 .analytics-controls {
   display: flex;

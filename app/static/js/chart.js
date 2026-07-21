@@ -65,6 +65,56 @@ function yDomain(values) {
 }
 
 /**
+ * Render a tiny axis-less sparkline into `container` — just the shape of a
+ * trend, for spots too small for a full chart (e.g. a dashboard card).
+ *
+ * Purely decorative: it carries no axis, labels, or hover, and is marked
+ * aria-hidden because the surrounding text already states the numbers. Needs
+ * at least two points; fewer clears the container.
+ *
+ * @param {HTMLElement} container
+ * @param {number[]} values  y-values in order (oldest → newest)
+ * @param {string} [color]   any CSS colour for the line
+ */
+export function renderSparkline(container, values, color = "var(--color-accent)") {
+  if (values.length < 2) {
+    container.replaceChildren();
+    return;
+  }
+
+  const w = 160;
+  const h = 40;
+  const pad = 4;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const sx = (i) => pad + (i / (values.length - 1)) * (w - 2 * pad);
+  const sy = (v) =>
+    max === min ? h / 2 : pad + (1 - (v - min) / (max - min)) * (h - 2 * pad);
+
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${w} ${h}`,
+    class: "sparkline",
+    "aria-hidden": "true",
+  });
+  const d = values
+    .map((v, i) => `${i === 0 ? "M" : "L"} ${sx(i)} ${sy(v)}`)
+    .join(" ");
+  svg.append(
+    svgEl("path", { class: "chart__line", d, fill: "none", stroke: color }),
+  );
+  // A dot marks the latest value — the end the eye should land on.
+  svg.append(
+    svgEl("circle", {
+      cx: sx(values.length - 1),
+      cy: sy(values.at(-1)),
+      r: 2.5,
+      fill: color,
+    }),
+  );
+  container.replaceChildren(svg);
+}
+
+/**
  * Render a line chart into `container`.
  *
  * @param {HTMLElement} container

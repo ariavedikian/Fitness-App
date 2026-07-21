@@ -1,6 +1,7 @@
 /** Dashboard: today's consumed nutrition against the profile's goals. */
 
 import { ApiError, apiFetch } from "./api.js";
+import { renderSparkline } from "./chart.js";
 import { kgToLbs } from "./units.js";
 
 function setText(selector, value) {
@@ -123,6 +124,16 @@ function renderWeight(entries) {
 
   const latest = entries[entries.length - 1];
   setText("[data-weight-current]", kgToLbs(latest.weight_kg).toFixed(1));
+
+  // A small trend of the recent weigh-ins (cap the history so the shape stays
+  // legible in a card-sized sparkline).
+  const spark = document.querySelector("[data-weight-spark]");
+  if (spark) {
+    renderSparkline(
+      spark,
+      entries.slice(-12).map((e) => kgToLbs(e.weight_kg)),
+    );
+  }
 
   if (entries.length >= 2) {
     const prev = entries[entries.length - 2];
