@@ -6,6 +6,7 @@
  *  computed here from the ordered series — the server returns pure facts. */
 
 import { ApiError, apiFetch } from "./api.js";
+import { renderLineChart } from "./chart.js";
 import { kgToLbs, lbsToKg } from "./units.js";
 
 function el(tag, className, text) {
@@ -28,6 +29,20 @@ function formatDate(iso) {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(undefined, {
     year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/** "2026-07-20" → local-midnight timestamp, for positioning on the time axis. */
+function dateToTs(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).getTime();
+}
+
+/** A compact "Jul 20" for axis ticks and the tooltip header. */
+function formatDateShort(ts) {
+  return new Date(ts).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
   });
@@ -67,6 +82,37 @@ function historyRow(entry, prev, onDelete) {
   return row;
 }
 
+/** Draw the weight trend, or a hint until there are two points to connect. */
+function renderChart(entries) {
+  const container = document.getElementById("weight-chart");
+  if (!container) return;
+
+  if (entries.length < 2) {
+    container.replaceChildren(
+      el("p", "chart__empty", "Log at least two weigh-ins to see your trend."),
+    );
+    return;
+  }
+
+  const points = entries.map((e) => ({
+    x: dateToTs(e.date),
+    y: kgToLbs(e.weight_kg),
+  }));
+  const first = entries[0];
+  const last = entries.at(-1);
+
+  renderLineChart(container, {
+    series: [{ points, color: "var(--color-accent)" }],
+    formatX: formatDateShort,
+    formatY: (v) => v.toFixed(0),
+    formatValue: (v) => `${v.toFixed(1)} lb`,
+    ariaLabel:
+      `Body-weight trend from ${formatDate(first.date)} to ` +
+      `${formatDate(last.date)}: ${lbs(first.weight_kg)} to ` +
+      `${lbs(last.weight_kg)} pounds.`,
+  });
+}
+
 /** Pre-fill the weight box with the profile's current weight, for a one-tap
  *  "same as last time". No profile yet just leaves it blank. */
 async function prefillWeight(form) {
@@ -99,6 +145,7 @@ export function initProgress() {
 
   async function refresh() {
     const { entries } = await apiFetch("/api/weight");
+    renderChart(entries);
 
     if (entries.length === 0) {
       summaryEl.textContent = "";
