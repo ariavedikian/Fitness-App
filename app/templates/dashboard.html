@@ -22,6 +22,10 @@
         <p class="card__meta">
           <span data-remaining="calories">–</span> kcal remaining
         </p>
+        {# Only shown once a workout adds calories back to the day's budget. #}
+        <p class="card__meta" data-exercise="calories" hidden>
+          +<span data-burned="calories">–</span> kcal from exercise
+        </p>
       </div>
       <p class="card__empty" data-goals-empty hidden>
         <a href="/profile">Set up your profile</a> to see your calorie goal.
@@ -71,9 +75,15 @@
       </p>
     </article>
 
-    <article class="card card--placeholder">
-      <h2 class="card__title">Workouts</h2>
-      <p class="card__empty">No workouts logged yet.</p>
+    <article class="card">
+      <h2 class="card__title">Today's workouts</h2>
+      <div data-workouts-ready hidden>
+        <ul class="mini-list" data-workouts-list></ul>
+        <a class="card__link" href="/workouts">Log a workout →</a>
+      </div>
+      <p class="card__empty" data-workouts-empty hidden>
+        No workouts yet. <a href="/workouts">Log a workout</a>.
+      </p>
     </article>
   </div>
 {% endblock %}
