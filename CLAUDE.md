@@ -90,13 +90,15 @@ fitness-app/
 │   ├── models/              # user, profile, food, log_entry, exercise,
 │   │                        #   workout_entry, weight_entry
 │   ├── schemas/             # Pydantic shapes: user, profile, food, log, workout,
-│   │                        #   weight
+│   │                        #   weight, analytics
 │   ├── services/            # business logic: user, profile, food, log, nutrition,
 │   │                        #   off_client (OFF adapter), search (LIKE-escape),
 │   │                        #   exercise, workout (MET math), workout_service,
-│   │                        #   weight_service
+│   │                        #   weight_service, analytics_service
 │   ├── api/                 # routers: auth, profile, foods, log, exercises,
-│   │                        #   workouts, weight, pages, health, deps
+│   │                        #   workouts, weight, analytics, pages, health, deps
+│   │                        # frontend: chart.js (shared SVG line chart +
+│   │                        #   sparkline); progress.js/analytics.js draw trends
 │   ├── static/{css,js}/     # main.css (design tokens); ES modules per feature
 │   └── templates/           # base + page templates (Jinja2)
 ├── alembic/                 # migrations (env.py reads DATABASE_URL from settings)
@@ -175,6 +177,21 @@ fitness-app/
     unrounded facts oldest-first; the client computes each "change since the
     previous weigh-in" and rounds for display (extends #14). Unrounded so
     imperial input round-trips (180 lb → 81.6466 kg → 180 lb).
+22. **Charts are hand-rolled SVG, not a library** — `static/js/chart.js` is a
+    small dependency-free line-chart (plus a `renderSparkline`) built from the
+    CSS tokens, keeping the frontend framework-free/same-origin and the charts
+    crisp, themeable, and accessible (crosshair+tooltip, a legend for ≥2 series,
+    the existing history/diary as the table view). One reusable module drives
+    the single-series weight chart and the three-series macro chart.
+23. **Trend days are sparse, never zero-filled** — `analytics_service` returns a
+    day only if it has a *meal*; a day with no food logged is "not tracked", not
+    a zero, so zero-filling would drag the calorie line to the floor and lie
+    about the trend. It reuses `log_service.day_totals` so a day sums exactly
+    like the diary/dashboard.
+24. **Categorical chart colours are validated, not eyeballed** — the macro
+    palette (`--chart-series-1..3`) was checked with the dataviz palette script
+    for colourblind separation and ≥3:1 contrast on the surface; colour follows
+    the macro in fixed order (never its daily rank), reinforced by a legend.
 
 ## Coding conventions
 
@@ -209,7 +226,7 @@ fitness-app/
 - Assert real behavior (e.g. duplicate insert raises `IntegrityError`), and
   hand-compute expected numbers in comments for domain math.
 
-## Completed features (milestones 1–9)
+## Completed features (milestones 1–10)
 
 1. **Foundation** — venv, config system, `/health`, pytest, git.
 2. **DB + auth** — `User` model; register / login / logout / `me`; bcrypt; sessions.
@@ -257,13 +274,21 @@ fitness-app/
    (pre-filled from the profile) + a history list showing each entry's change
    from the previous one (deltas computed client-side). The dashboard gains a
    **Weight** card (current weight + change since the last weigh-in).
+10. **Charts & analytics** — hand-rolled dependency-free SVG charts. A shared
+    `chart.js` module (line chart with time axis, nice-number ticks, hover
+    crosshair+tooltip, a legend for ≥2 series, plus a minimal `renderSparkline`)
+    draws the **weight trend** on `/progress`. A new `analytics_service` rolls
+    the meal + workout logs into per-day totals (`GET /api/analytics/daily?days=N`,
+    reusing `log_service.day_totals`; sparse — meal-days only, never zero-filled),
+    and the new `/analytics` page charts **daily calories** (one line) and
+    **macros** (protein/carbs/fat, three lines in a validated colourblind-safe
+    palette) over a 7/30/90-day range. The dashboard Weight card gains a
+    sparkline of recent weigh-ins.
 
 ## Planned milestones (next → later)
 
-- **NEXT — Charts & analytics** — weight/calorie/macro trends (the weight series
-  from M9 is already stored oldest-first, ready to chart).
-- **AI features** — meal recommendations, photo calorie estimation, personalized
-  workout recommendations.
+- **NEXT — AI features** — meal recommendations, photo calorie estimation,
+  personalized workout recommendations.
 - **Later food-data enhancements** — USDA FoodData Central as a second source
   (better whole-food data; needs a free key), and barcode-scan lookup (the OFF
   `fetch_off_product` path already supports barcodes).
@@ -287,8 +312,9 @@ alembic upgrade head
 
 ## Current state
 
-- **170 tests passing.** Eight migrations applied (users → profiles → foods →
+- **181 tests passing.** Eight migrations applied (users → profiles → foods →
   log_entries → foods.off_id → exercises → workout_entries → weight_entries).
+  Milestone 10 (charts/analytics) added no schema — it reads existing tables.
 - **External calls in tests are disabled by default** via an autouse `_offline`
   fixture in `tests/conftest.py` (sets `settings.off_enabled = False`); tests that
   exercise the OFF path re-enable it and stub `off_client` — nothing hits the
@@ -296,16 +322,20 @@ alembic upgrade head
   planned async, for consistency with the sync route/DB stack).
 - **Dev accounts in `fittrack.db`** (created while testing; safe to ignore or
   delete the DB and re-migrate/re-seed for a clean slate):
-  - `demo@example.com` / `correct-horse-battery` — has a profile + logged entries,
-    plus one OFF food imported during M7 testing (`off_id` set — exercises dedupe),
-    and two weigh-ins added during M9 testing (profile weight synced to 179 lb).
+  - `demo@example.com` / `correct-horse-battery` — has a profile, one OFF food
+    imported during M7 testing (`off_id` set — exercises dedupe), 6 weigh-ins
+    (Jul 6–20) and ~7 days of meals (Jul 15–21) seeded during M9/M10 testing, so
+    the trend charts have real data to draw. Profile weight synced to ~179 lb.
   - `newbie@example.com` / `another-good-password` — no profile (exercises empty
     states).
 - A dev-server launch config lives at the **workspace-root** `.claude/launch.json`
   (one level above this repo), used by the browser preview tooling.
 - **Known gap:** static assets (`/static/js/*.js`, CSS) are served by `StaticFiles`
   with no cache headers, so browsers can run a **stale cached** copy after a change
-  (bit us again verifying M9's dashboard.js — a plain reload kept the old module;
-  `import('/static/js/x.js?v='+Date.now())` confirmed the fresh one). Needs
+  (bit us on dashboard.js in M9 *and* M10 — a plain reload keeps the old module;
+  `import('/static/js/x.js?v='+Date.now())` confirms the fresh one). Needs
   cache-busting/versioned asset URLs — tracked as a follow-up task.
-- Milestone 9 is complete and committed-ready. **Resume at Charts & analytics.**
+- **Nav is filling up:** the top nav is now 7 links (Dashboard/Diary/Foods/
+  Workouts/Progress/Analytics/Profile). It still fits without overflow, but a
+  responsive/collapsing nav is worth doing before adding more pages.
+- Milestone 10 is complete and committed-ready. **Resume at AI features.**
