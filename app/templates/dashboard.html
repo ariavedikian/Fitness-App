@@ -65,6 +65,22 @@
     </article>
 
     <article class="card">
+      <h2 class="card__title">Weight</h2>
+      <div data-weight-ready hidden>
+        <p class="stat">
+          <span data-weight-current>–</span>
+          <span class="stat__unit">lb</span>
+        </p>
+        {# Only shown once there is a previous weigh-in to compare against. #}
+        <p class="card__meta" data-weight-change hidden></p>
+        <a class="card__link" href="/progress">View progress →</a>
+      </div>
+      <p class="card__empty" data-weight-empty hidden>
+        No weigh-ins yet. <a href="/progress">Log your weight</a>.
+      </p>
+    </article>
+
+    <article class="card">
       <h2 class="card__title">Today's meals</h2>
       <div data-log-ready hidden>
         <ul class="mini-list" data-log-list></ul>

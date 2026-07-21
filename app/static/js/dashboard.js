@@ -1,6 +1,7 @@
 /** Dashboard: today's consumed nutrition against the profile's goals. */
 
 import { ApiError, apiFetch } from "./api.js";
+import { kgToLbs } from "./units.js";
 
 function setText(selector, value) {
   const el = document.querySelector(selector);
@@ -111,12 +112,41 @@ function renderWorkouts(entries) {
   reveal("[data-workouts-ready]");
 }
 
+/** Current weight (the latest weigh-in) and the change from the one before it.
+ *  Weight is shown in pounds to match the rest of the UI; the series comes back
+ *  oldest-first, so the newest entry is last. */
+function renderWeight(entries) {
+  if (entries.length === 0) {
+    reveal("[data-weight-empty]");
+    return;
+  }
+
+  const latest = entries[entries.length - 1];
+  setText("[data-weight-current]", kgToLbs(latest.weight_kg).toFixed(1));
+
+  if (entries.length >= 2) {
+    const prev = entries[entries.length - 2];
+    const delta =
+      Math.round((kgToLbs(latest.weight_kg) - kgToLbs(prev.weight_kg)) * 10) / 10;
+    const changeEl = document.querySelector("[data-weight-change]");
+    if (changeEl && delta !== 0) {
+      // U+2212 minus for a loss; neutral tone, no good/bad colour.
+      const sign = delta > 0 ? "+" : "−";
+      changeEl.textContent = `${sign}${Math.abs(delta).toFixed(1)} lb since last weigh-in`;
+      changeEl.hidden = false;
+    }
+  }
+
+  reveal("[data-weight-ready]");
+}
+
 export async function initDashboard() {
-  // Today's log and workouts always load; goals may 404 if there is no
-  // profile yet.
-  const [log, workouts, goals] = await Promise.all([
+  // Today's log, workouts and weight history always load; goals may 404 if
+  // there is no profile yet.
+  const [log, workouts, weight, goals] = await Promise.all([
     apiFetch("/api/log"),
     apiFetch("/api/workouts"),
+    apiFetch("/api/weight"),
     loadGoals(),
   ]);
 
@@ -128,4 +158,5 @@ export async function initDashboard() {
 
   renderMeals(log.entries);
   renderWorkouts(workouts.entries);
+  renderWeight(weight.entries);
 }
