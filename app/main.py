@@ -16,6 +16,7 @@ from app.api import (
     log,
     pages,
     profile,
+    weight,
     workouts,
 )
 from app.core.config import settings
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     app.include_router(log.router)
     app.include_router(exercises.router)
     app.include_router(workouts.router)
+    app.include_router(weight.router)
     app.include_router(pages.router)
 
     return app
