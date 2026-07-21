@@ -17,7 +17,15 @@ engineer and mentor, not a code generator:
 - Make small, incremental changes. Don't rewrite existing files unless necessary.
 - After each change: run `pytest`, and for UI work **verify in a real browser**
   (drive the actual flow), not just tests.
+- **Offer a commit at each self-contained green sub-step** (not batched to the
+  milestone end); commit only once the owner confirms.
 - Keep code production-quality — this is a portfolio piece.
+
+**Browser-verification gotcha:** static JS/CSS have no cache headers, so the
+browser often runs a **stale cached** copy after you edit a file. Force a
+cache-bypassing reload (or `import('/static/js/x.js?v=' + Date.now())` to test
+the fresh module) — don't debug a "bug" that's really a stale asset. (Proper
+fix is tracked as a follow-up; see *Current state*.)
 
 ## Tech stack
 
