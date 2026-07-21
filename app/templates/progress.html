@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Progress · FitTrack{% endblock %}
+
+{% block content %}
+  <section class="page-header">
+    <h1 class="page-header__title">Progress</h1>
+    <p class="page-header__subtitle">Track your body weight over time.</p>
+  </section>
+
+  <div class="card form-card">
+    <form id="weight-form">
+      <p class="form-error" data-error hidden></p>
+
+      <div class="field">
+        <label for="weight-date">Date</label>
+        {# Bounded to today in JS — you can back-fill history but not the future. #}
+        <input type="date" name="date" id="weight-date" required />
+      </div>
+
+      <div class="field">
+        <label for="weight-lbs">Weight</label>
+        <div class="field-inline">
+          <input
+            type="number"
+            name="weight_lbs"
+            id="weight-lbs"
+            min="1"
+            step="0.1"
+            inputmode="decimal"
+            required
+          />
+          <span class="field-inline__unit">lbs</span>
+        </div>
+      </div>
+
+      <button type="submit" class="button button--primary button--block">
+        Save weigh-in
+      </button>
+    </form>
+    <p id="weight-status" class="log-status" role="status" aria-live="polite" hidden></p>
+  </div>
+
+  <section class="today" aria-labelledby="history-heading">
+    <div class="today__header">
+      <h2 id="history-heading" class="today__title">History</h2>
+      <span id="history-summary" class="today__total"></span>
+    </div>
+    <div id="weight-history"></div>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script type="module">
+    import { initProgress } from "/static/js/progress.js";
+    initProgress();
+  </script>
+{% endblock %}
