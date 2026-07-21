@@ -30,6 +30,13 @@
   --space-6: 2rem;
   --space-7: 3rem;
 
+  /* Categorical chart series, assigned in fixed order (protein, carbs, fat on
+   * the macro chart). Validated colourblind-safe with ≥3:1 contrast on the
+   * surface via the dataviz palette checker — don't reorder or eyeball-swap. */
+  --chart-series-1: #1668a6;
+  --chart-series-2: #b45309;
+  --chart-series-3: #9333ea;
+
   --radius: 0.5rem;
   --radius-lg: 0.75rem;
 
@@ -882,9 +889,59 @@ a {
   border-radius: 2px;
 }
 
+.chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.chart__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.chart__legend-swatch {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+}
+
 .chart__empty {
   color: var(--color-text-muted);
   font-size: 0.9375rem;
+}
+
+/* --------------------------------------------------------- analytics range */
+.analytics-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.analytics-controls__label {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.analytics-controls__select {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: inherit;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.analytics-controls__select:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-color: var(--color-accent);
 }
 
 /* ------------------------------------------------------------ wider screens */

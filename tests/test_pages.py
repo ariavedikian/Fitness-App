@@ -144,6 +144,22 @@ def test_progress_page_renders_for_signed_in_users(client: TestClient) -> None:
     assert "weight-form" in response.text
 
 
+def test_analytics_page_redirects_anonymous_visitors(client: TestClient) -> None:
+    response = client.get("/analytics", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/login"
+
+
+def test_analytics_page_renders_for_signed_in_users(client: TestClient) -> None:
+    sign_in(client)
+
+    response = client.get("/analytics")
+
+    assert response.status_code == 200
+    assert "range-select" in response.text
+
+
 def test_pages_are_absent_from_the_api_schema(client: TestClient) -> None:
     # /docs should describe the API, not the website.
     paths = client.get("/openapi.json").json()["paths"]

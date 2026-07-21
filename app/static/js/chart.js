@@ -260,5 +260,24 @@ export function renderLineChart(container, config) {
   const figure = document.createElement("div");
   figure.className = "chart__figure";
   figure.append(svg, tooltip);
-  container.replaceChildren(figure);
+
+  // A legend is mandatory for two or more series so identity is never carried
+  // by colour alone; a single series is named by the section title instead.
+  const labelled = series.filter((s) => s.label);
+  if (labelled.length >= 2) {
+    const legend = document.createElement("div");
+    legend.className = "chart__legend";
+    for (const s of labelled) {
+      const item = document.createElement("span");
+      item.className = "chart__legend-item";
+      const swatch = document.createElement("span");
+      swatch.className = "chart__legend-swatch";
+      swatch.style.background = s.color;
+      item.append(swatch, document.createTextNode(s.label));
+      legend.append(item);
+    }
+    container.replaceChildren(legend, figure);
+  } else {
+    container.replaceChildren(figure);
+  }
 }
