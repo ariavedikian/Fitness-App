@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Workouts · FitTrack{% endblock %}
+
+{% block content %}
+  <section class="page-header">
+    <h1 class="page-header__title">Workouts</h1>
+    <p class="page-header__subtitle">Log an exercise and track calories burned.</p>
+  </section>
+
+  <div class="search">
+    <label class="search__label" for="exercise-search">Search exercises</label>
+    <input
+      type="search"
+      id="exercise-search"
+      class="search__input"
+      placeholder="Try “running” or “bench press”…"
+      autocomplete="off"
+    />
+    <p id="log-status" class="log-status" role="status" aria-live="polite" hidden></p>
+    <p id="search-status" class="search-status" role="status" aria-live="polite"></p>
+    <div id="search-results"></div>
+  </div>
+
+  <section class="today" aria-labelledby="today-heading">
+    <div class="today__header">
+      <h2 id="today-heading" class="today__title">Today's workouts</h2>
+      <span id="today-total" class="today__total"></span>
+    </div>
+    <div id="today-workouts"></div>
+  </section>
+
+  {# One dialog reused for whichever exercise is added. Which field group shows
+     depends on the exercise type; workout-dialog.js toggles them. #}
+  <dialog id="workout-dialog" class="dialog">
+    <form class="dialog__form">
+      <h2 class="dialog__title" data-exercise-name></h2>
+      <p class="dialog__hint" data-type-hint></p>
+      <p class="form-error" data-error hidden></p>
+
+      {# Strength: sets + reps side by side, weight below. #}
+      <div data-fields="strength" hidden>
+        <div class="field-row">
+          <div class="field">
+            <label for="w-sets">Sets</label>
+            <input type="number" id="w-sets" name="sets" min="1" step="1" inputmode="numeric" />
+          </div>
+          <div class="field">
+            <label for="w-reps">Reps</label>
+            <input type="number" id="w-reps" name="reps" min="1" step="1" inputmode="numeric" />
+          </div>
+        </div>
+        <div class="field">
+          <label for="w-weight">Weight (kg)<span class="field__optional"> — optional</span></label>
+          <input type="number" id="w-weight" name="weight_kg" min="0" step="any" inputmode="decimal" />
+        </div>
+      </div>
+
+      {# Cardio: duration + distance, then an optional calories override. #}
+      <div data-fields="cardio" hidden>
+        <div class="field-row">
+          <div class="field">
+            <label for="w-duration">Duration (min)</label>
+            <input type="number" id="w-duration" name="duration_minutes" min="0" step="any" inputmode="decimal" />
+          </div>
+          <div class="field">
+            <label for="w-distance">Distance (km)<span class="field__optional"> — optional</span></label>
+            <input type="number" id="w-distance" name="distance_km" min="0" step="any" inputmode="decimal" />
+          </div>
+        </div>
+        <div class="field">
+          <label for="w-calories">Calories burned</label>
+          <input type="number" id="w-calories" name="calories_burned" min="0" step="any" inputmode="decimal" placeholder="Estimated from your weight if left blank" />
+        </div>
+      </div>
+
+      <div class="dialog__actions">
+        <button type="button" class="button button--ghost" data-cancel>Cancel</button>
+        <button type="submit" class="button button--primary">Log it</button>
+      </div>
+    </form>
+  </dialog>
+{% endblock %}
+
+{% block scripts %}
+  <script type="module">
+    import { initExerciseSearch } from "/static/js/workout-search.js";
+    import { initWorkoutDialog } from "/static/js/workout-dialog.js";
+    import { initTodayWorkouts } from "/static/js/workouts.js";
+
+    const today = initTodayWorkouts();
+
+    initWorkoutDialog({
+      onLogged: (entry) => {
+        const status = document.getElementById("log-status");
+        const burned = entry.calories_burned
+          ? ` ${entry.calories_burned} kcal burned.`
+          : "";
+        status.textContent = `Logged ${entry.exercise_name}.${burned}`;
+        status.hidden = false;
+        today.refresh();
+      },
+    });
+
+    initExerciseSearch();
+  </script>
+{% endblock %}

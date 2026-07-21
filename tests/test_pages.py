@@ -112,6 +112,22 @@ def test_diary_page_renders_for_signed_in_users(client: TestClient) -> None:
     assert "diary-content" in response.text
 
 
+def test_workouts_page_redirects_anonymous_visitors(client: TestClient) -> None:
+    response = client.get("/workouts", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/login"
+
+
+def test_workouts_page_renders_for_signed_in_users(client: TestClient) -> None:
+    sign_in(client)
+
+    response = client.get("/workouts")
+
+    assert response.status_code == 200
+    assert "exercise-search" in response.text
+
+
 def test_pages_are_absent_from_the_api_schema(client: TestClient) -> None:
     # /docs should describe the API, not the website.
     paths = client.get("/openapi.json").json()["paths"]

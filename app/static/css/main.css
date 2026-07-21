@@ -322,6 +322,18 @@ a {
   gap: var(--space-3);
 }
 
+/* Two or more stacked fields sharing a row (e.g. Sets + Reps), split evenly. */
+.field-row > .field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A quiet "— optional" suffix on a field label. */
+.field__optional {
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
 .field-inline {
   display: flex;
   align-items: center;
@@ -513,6 +525,42 @@ a {
 .food-item__macros {
   margin-top: var(--space-2);
   font-size: 0.9375rem;
+}
+
+/* --------------------------------------------------- today's workouts list */
+.today {
+  margin-top: var(--space-6);
+  padding-bottom: var(--space-7);
+}
+
+.today__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.today__title {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.today__total {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--color-accent-dark);
+}
+
+.today__empty {
+  color: var(--color-text-muted);
+  font-size: 0.9375rem;
+}
+
+.workout-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 /* ------------------------------------------------------- logged confirmation */

@@ -81,3 +81,12 @@ def diary_page(
     if user is None:
         return RedirectResponse("/login", REDIRECT)
     return templates.TemplateResponse(request, "diary.html", {"user": user})
+
+
+@router.get("/workouts", response_class=HTMLResponse)
+def workouts_page(
+    request: Request, user: User | None = Depends(get_optional_user)
+) -> Response:
+    if user is None:
+        return RedirectResponse("/login", REDIRECT)
+    return templates.TemplateResponse(request, "workouts.html", {"user": user})
