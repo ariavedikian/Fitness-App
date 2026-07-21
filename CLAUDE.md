@@ -87,13 +87,16 @@ fitness-app/
 │   │   ├── base.py          # DeclarativeBase `Base` + enum_column helper
 │   │   ├── session.py       # engine, SessionLocal, get_db() dependency
 │   │   └── seed.py          # `python -m app.db.seed` — idempotent food + exercise seed
-│   ├── models/              # user, profile, food, log_entry, exercise, workout_entry
-│   ├── schemas/             # Pydantic shapes: user, profile, food, log, workout
+│   ├── models/              # user, profile, food, log_entry, exercise,
+│   │                        #   workout_entry, weight_entry
+│   ├── schemas/             # Pydantic shapes: user, profile, food, log, workout,
+│   │                        #   weight
 │   ├── services/            # business logic: user, profile, food, log, nutrition,
 │   │                        #   off_client (OFF adapter), search (LIKE-escape),
-│   │                        #   exercise, workout (MET math), workout_service
+│   │                        #   exercise, workout (MET math), workout_service,
+│   │                        #   weight_service
 │   ├── api/                 # routers: auth, profile, foods, log, exercises,
-│   │                        #   workouts, pages, health, deps
+│   │                        #   workouts, weight, pages, health, deps
 │   ├── static/{css,js}/     # main.css (design tokens); ES modules per feature
 │   └── templates/           # base + page templates (Jinja2)
 ├── alembic/                 # migrations (env.py reads DATABASE_URL from settings)
@@ -161,6 +164,17 @@ fitness-app/
 19. **Net calories add exercise back to the budget** — the dashboard shows
     `remaining = goal − eaten + burned` (MyFitnessPal's model): logging a workout
     lets you eat more. Only calories net out; macros stay consumed-vs-goal.
+20. **Weight is a time-series; the profile holds the current value** — weigh-ins
+    live in their own `WeightEntry` table (one per day, unique `(user_id, date)`
+    that doubles as the query index). `Profile.weight_kg` stays the canonical
+    "current weight" driving goals + cardio calories, and recording *today's*
+    weigh-in syncs it so the two never diverge; back-dated entries are history
+    only. Chosen over deriving the profile weight from the series (too invasive
+    for M9) or leaving them independent (silent divergence).
+21. **Per-entry deltas are presentation math** — the weight API returns pure,
+    unrounded facts oldest-first; the client computes each "change since the
+    previous weigh-in" and rounds for display (extends #14). Unrounded so
+    imperial input round-trips (180 lb → 81.6466 kg → 180 lb).
 
 ## Coding conventions
 
@@ -195,7 +209,7 @@ fitness-app/
 - Assert real behavior (e.g. duplicate insert raises `IntegrityError`), and
   hand-compute expected numbers in comments for domain math.
 
-## Completed features (milestones 1–8)
+## Completed features (milestones 1–9)
 
 1. **Foundation** — venv, config system, `/health`, pytest, git.
 2. **DB + auth** — `User` model; register / login / logout / `me`; bcrypt; sessions.
@@ -234,11 +248,20 @@ fitness-app/
    search → type-aware `<dialog>` → today's list. Dashboard folds burned calories
    in as **net calories** (remaining = goal − eaten + burned, MyFitnessPal-style;
    macros untouched).
+9. **Progress tracking (body-weight over time)** — a `WeightEntry` time-series,
+   one weigh-in per day (unique `(user_id, date)`, index-backed). `weight_service`
+   upserts a day in place and, for *today's* weigh-in, syncs `Profile.weight_kg`
+   (the canonical current weight behind goals + cardio calories); back-dated
+   entries are history only. `POST/GET/DELETE /api/weight` returns the series
+   oldest-first and unrounded. `/progress` page: an imperial weigh-in form
+   (pre-filled from the profile) + a history list showing each entry's change
+   from the previous one (deltas computed client-side). The dashboard gains a
+   **Weight** card (current weight + change since the last weigh-in).
 
 ## Planned milestones (next → later)
 
-- **NEXT — Progress tracking** — body-weight entries over time.
-- **Charts & analytics** — weight/calorie/macro trends.
+- **NEXT — Charts & analytics** — weight/calorie/macro trends (the weight series
+  from M9 is already stored oldest-first, ready to chart).
 - **AI features** — meal recommendations, photo calorie estimation, personalized
   workout recommendations.
 - **Later food-data enhancements** — USDA FoodData Central as a second source
@@ -264,8 +287,8 @@ alembic upgrade head
 
 ## Current state
 
-- **151 tests passing.** Seven migrations applied (users → profiles → foods →
-  log_entries → foods.off_id → exercises → workout_entries).
+- **170 tests passing.** Eight migrations applied (users → profiles → foods →
+  log_entries → foods.off_id → exercises → workout_entries → weight_entries).
 - **External calls in tests are disabled by default** via an autouse `_offline`
   fixture in `tests/conftest.py` (sets `settings.off_enabled = False`); tests that
   exercise the OFF path re-enable it and stub `off_client` — nothing hits the
@@ -274,13 +297,15 @@ alembic upgrade head
 - **Dev accounts in `fittrack.db`** (created while testing; safe to ignore or
   delete the DB and re-migrate/re-seed for a clean slate):
   - `demo@example.com` / `correct-horse-battery` — has a profile + logged entries,
-    plus one OFF food imported during M7 testing (`off_id` set — exercises dedupe).
+    plus one OFF food imported during M7 testing (`off_id` set — exercises dedupe),
+    and two weigh-ins added during M9 testing (profile weight synced to 179 lb).
   - `newbie@example.com` / `another-good-password` — no profile (exercises empty
     states).
 - A dev-server launch config lives at the **workspace-root** `.claude/launch.json`
   (one level above this repo), used by the browser preview tooling.
 - **Known gap:** static assets (`/static/js/*.js`, CSS) are served by `StaticFiles`
   with no cache headers, so browsers can run a **stale cached** copy after a change
-  (bit us verifying M8's dashboard.js). Needs cache-busting/versioned asset URLs —
-  tracked as a follow-up task.
-- Milestone 8 is complete and committed-ready. **Resume at Progress tracking.**
+  (bit us again verifying M9's dashboard.js — a plain reload kept the old module;
+  `import('/static/js/x.js?v='+Date.now())` confirmed the fresh one). Needs
+  cache-busting/versioned asset URLs — tracked as a follow-up task.
+- Milestone 9 is complete and committed-ready. **Resume at Charts & analytics.**
