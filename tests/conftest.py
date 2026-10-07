@@ -21,13 +21,18 @@ from app.main import create_app
 
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Never touch the real Open Food Facts API from the test suite.
+    """Never touch a real third-party API (Open Food Facts, Claude) in tests.
 
     OFF is disabled by default so hybrid search runs local-only and no test
     depends on a live third party. Tests that exercise the OFF path re-enable
     it and stub ``off_client.search_off`` / ``fetch_off_product`` themselves.
+
+    AI is forced off too, even if a developer's ``.env`` enables it with a
+    real key — otherwise running the suite could make billed Claude calls.
+    AI tests re-enable it and inject a client backed by a mock transport.
     """
     monkeypatch.setattr(settings, "off_enabled", False)
+    monkeypatch.setattr(settings, "ai_enabled", False)
 
 
 @pytest.fixture

@@ -14,3 +14,6 @@ jinja2==3.1.6
 # test suite (FastAPI's TestClient is built on it), so it lives here at runtime
 # rather than in requirements-dev.txt.
 httpx==0.28.1
+# Official Claude SDK (AI meal suggestions). The 1.x line is built on httpx2,
+# a separate package that installs alongside httpx without conflict.
+anthropic==1.12.0

@@ -7,8 +7,9 @@ configurable value has exactly one home.
 """
 
 from pathlib import Path
+from typing import Literal
 
-from pydantic import model_validator
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolves to the project root regardless of where the server is started
@@ -56,6 +57,22 @@ class Settings(BaseSettings):
     # Add a contact (email/URL) via .env if running this against their live
     # service in earnest; kept generic here so nothing personal is committed.
     off_user_agent: str = "FitTrack/0.1 (mentoring project)"
+
+    # --- Claude (AI meal suggestions) ---
+    # Off by default: unlike OFF, every request is billed to an Anthropic
+    # account, so the feature is opt-in. The flag doubles as a kill switch —
+    # switch it off (e.g. during a cost spike) without removing the key.
+    ai_enabled: bool = False
+    # Read from ANTHROPIC_API_KEY — the same variable the SDK itself uses.
+    # SecretStr keeps a billable credential out of reprs, logs and tracebacks.
+    anthropic_api_key: SecretStr | None = None
+    ai_model: str = "claude-opus-4-8"
+    # How hard Claude thinks before answering: the main cost/latency dial.
+    ai_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+    # The SDK defaults (10 min, 2 retries) suit batch jobs, not a page someone
+    # is waiting on; a timed-out attempt is also retried, so these multiply.
+    ai_timeout_seconds: float = 60.0
+    ai_max_retries: int = 1
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
