@@ -8,6 +8,10 @@
        which defeats every media query in the stylesheet. #}
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}FitTrack{% endblock %}</title>
+    {# Runs before first paint, so the stylesheet can collapse the phone menu
+       only when JavaScript is there to open it: no flash of the expanded
+       list on load, and without JS the links simply stay visible. #}
+    <script>document.documentElement.classList.add("js");</script>
     <link rel="stylesheet" href="/static/css/main.css" />
   </head>
 
@@ -17,18 +21,38 @@
         <a class="logo" href="/">Fit<span>Track</span></a>
 
         {% if user %}
-          <nav class="site-nav">
-            <a class="site-nav__link" href="/dashboard">Dashboard</a>
-            <a class="site-nav__link" href="/diary">Diary</a>
-            <a class="site-nav__link" href="/foods">Foods</a>
-            <a class="site-nav__link" href="/workouts">Workouts</a>
-            <a class="site-nav__link" href="/progress">Progress</a>
-            <a class="site-nav__link" href="/analytics">Analytics</a>
-            <a class="site-nav__link" href="/profile">Profile</a>
-            <span class="site-nav__email">{{ user.email }}</span>
-            <button type="button" class="button button--ghost" data-logout>
-              Log out
-            </button>
+          {# On phones the links collapse behind this button (nav.js); from
+             48rem up they sit inline and the button is hidden. #}
+          <button type="button" class="button button--ghost site-nav__toggle"
+                  aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
+            Menu
+          </button>
+          <nav class="site-nav" id="site-nav" aria-label="Main">
+            {% set nav_links = [
+              ("/dashboard", "Dashboard"),
+              ("/diary", "Diary"),
+              ("/foods", "Foods"),
+              ("/workouts", "Workouts"),
+              ("/progress", "Progress"),
+              ("/analytics", "Analytics"),
+              ("/profile", "Profile"),
+            ] %}
+            <div class="site-nav__links">
+              {% for href, label in nav_links %}
+                {# aria-current tells screen readers which page this is; the
+                   stylesheet underlines it for everyone else. #}
+                <a class="site-nav__link" href="{{ href }}"
+                   {% if request.url.path == href %}aria-current="page"{% endif %}>
+                  {{- label -}}
+                </a>
+              {% endfor %}
+            </div>
+            <div class="site-nav__account">
+              <span class="site-nav__email">{{ user.email }}</span>
+              <button type="button" class="button button--ghost" data-logout>
+                Log out
+              </button>
+            </div>
           </nav>
         {% endif %}
       </div>
@@ -39,7 +63,9 @@
     {% if user %}
       <script type="module">
         import { wireLogout } from "/static/js/auth.js";
+        import { initNav } from "/static/js/nav.js";
         wireLogout();
+        initNav();
       </script>
     {% endif %}
 

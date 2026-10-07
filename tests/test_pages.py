@@ -1,5 +1,7 @@
 """Tests for the HTML page routes."""
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -210,3 +212,42 @@ def test_pages_are_absent_from_the_api_schema(client: TestClient) -> None:
 
     assert "/dashboard" not in paths
     assert "/api/auth/login" in paths
+
+
+# ---------------------------------------------------------------- site nav
+def _nav_links(html: str) -> list[str]:
+    """Each site-nav link's opening tag, whitespace-collapsed."""
+    return [
+        " ".join(tag.split())
+        for tag in re.findall(r'<a class="site-nav__link"[^>]*>', html)
+    ]
+
+
+@pytest.mark.parametrize("path", ["/dashboard", "/diary", "/analytics"])
+def test_nav_marks_only_the_current_page(client: TestClient, path: str) -> None:
+    sign_in(client)
+
+    links = _nav_links(client.get(path).text)
+
+    assert len(links) == 7
+    current = [tag for tag in links if 'aria-current="page"' in tag]
+    assert current == [f'<a class="site-nav__link" href="{path}" aria-current="page">']
+
+
+def test_nav_has_an_accessible_menu_toggle(client: TestClient) -> None:
+    sign_in(client)
+
+    html = " ".join(client.get("/dashboard").text.split())
+
+    # The button names what it controls and starts collapsed…
+    assert 'aria-expanded="false" aria-controls="site-nav" data-nav-toggle' in html
+    # …and the nav it controls is a labelled landmark.
+    assert '<nav class="site-nav" id="site-nav" aria-label="Main">' in html
+    assert "/static/js/nav.js" in html
+
+
+def test_signed_out_pages_have_no_nav_or_menu(client: TestClient) -> None:
+    html = client.get("/login").text
+
+    assert "data-nav-toggle" not in html
+    assert 'class="site-nav"' not in html

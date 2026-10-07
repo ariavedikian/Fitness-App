@@ -115,7 +115,8 @@ fitness-app/
 │   │                        #   suggestions.js (meal ideas); photo-estimate.js
 │   │                        #   (photo → review → log); meals.js (shared
 │   │                        #   time-of-day meal default); notice.js (shared
-│   │                        #   status lines for the AI features)
+│   │                        #   status lines for the AI features); nav.js
+│   │                        #   (the phone menu's open/close)
 │   ├── static/{css,js}/     # main.css (design tokens); ES modules per feature
 │   └── templates/           # base + page templates (Jinja2)
 ├── alembic/                 # migrations (env.py reads DATABASE_URL from settings)
@@ -294,6 +295,22 @@ fitness-app/
     transaction), and creates entries with `food_id` NULL — **never** `Food`
     rows, because the catalogue is shared and one person's estimate isn't a
     food everyone should find in search.
+32. **The nav collapses behind a Menu button on phones, with breakpoints
+    from measurement** — chosen over a bottom tab bar (7 destinations need a
+    "More" tab plus icons), a swipeable strip (off-screen links are easy to
+    miss) and wrapping rows (a tall header on every page). Measured: the
+    logo + 7 links + Log out need ~656 px and the email ~150 more, so below
+    **48rem** the links collapse behind the button, from 48rem they sit
+    inline, and the email joins at **64rem**, truncated with an ellipsis (it's
+    user data — a long address must not widen the header again). A one-line
+    inline script in `<head>` adds a `js` class before first paint; the menu
+    collapses only under it, so there's no flash of the expanded list and,
+    without JS, the links stay visible instead of hiding behind a button that
+    can't work. Disclosure semantics: a real `<button>` with `aria-expanded` +
+    `aria-controls`, `<nav aria-label="Main">`, Esc closes and returns focus
+    to the button, a tap outside closes, ≥44 px rows. The links come from one
+    list in `base.html`, which also marks the current page with
+    `aria-current="page"` (underlined in the accent).
 
 ## Coding conventions
 
@@ -334,7 +351,7 @@ fitness-app/
 - Goals depend on today's date (age), so tests that need them read
   `/api/profile/goals` rather than hard-coding numbers that rot on a birthday.
 
-## Completed features (milestones 1–12)
+## Completed features (milestones 1–13)
 
 1. **Foundation** — venv, config system, `/health`, pytest, git.
 2. **DB + auth** — `User` model; register / login / logout / `me`; bcrypt; sessions.
@@ -427,13 +444,16 @@ fitness-app/
     that rescale its nutrition live, Remove, running totals (summed unrounded,
     rounded once), and a meal picker; "Log N items" saves only what was
     reviewed.
+13. **Responsive navigation** — the 7-link nav no longer widens phone pages
+    (it had made every page ~618 px wide at 375 px, so mobile browsers zoomed
+    the app out to ~60%). Below 48rem the links collapse behind a **Menu**
+    button (`nav.js`) into a full-width list with the account row at the
+    bottom; from 48rem they're inline; from 64rem the email shows too. The
+    current page is marked with `aria-current` (decision #32).
 
 ## Planned milestones (next → later)
 
-- **NEXT — responsive navigation (high priority)** — the 7-link top nav makes
-  every page ~618 px wide on a 375 px phone, so mobile browsers zoom the whole
-  app out to ~60% (see *Current state*). Fix before adding pages.
-- **Then — personalized workout recommendations**, the last planned AI
+- **NEXT — personalized workout recommendations**, the last planned AI
   feature: same `ai_client._call` + schema pattern, recorded in
   `ai_requests` under its own feature name so it shares the allowance.
 - **Later food-data enhancements** — USDA FoodData Central as a second source
@@ -475,7 +495,7 @@ the input with a `DataTransfer`, then dispatch `change`.
 
 ## Current state
 
-- **271 tests passing.** Nine migrations applied (users → profiles → foods →
+- **276 tests passing.** Nine migrations applied (users → profiles → foods →
   log_entries → foods.off_id → exercises → workout_entries → weight_entries →
   ai_requests). Of Milestones 10–12 only 11e changed the schema (it added
   `ai_requests`, the rate-limit log); photo estimates reuse `log_entries`.
@@ -510,15 +530,18 @@ the input with a `DataTransfer`, then dispatch `change`.
   (bit us on dashboard.js in M9 *and* M10 — a plain reload keeps the old module;
   `import('/static/js/x.js?v='+Date.now())` confirms the fresh one). Needs
   cache-busting/versioned asset URLs — tracked as a follow-up task.
-- **Known gap — nav overflow (high priority):** the top nav (7 links + email +
-  Log out) doesn't wrap or collapse. At ~716 px it overflows (`scrollWidth`
-  762 vs 716, M11c); **at a 375 px phone width it makes every page ~618 px
-  wide, so mobile browsers zoom the whole app out to ~60%** (found in M12c;
-  only `.site-nav` and its children overflow — the page content itself fits).
-  The responsive/collapsing nav is the next task (tracked as a follow-up).
-- **Browser-pane tip:** when the desktop app window is behind other windows,
-  the preview pane can't draw, so screenshots and coordinate clicks time out;
-  drive the page with DOM events and read state with `read_page`/JS instead.
-- Milestones 11 (meal recommendations + per-user rate limit, 11a–11e) and 12
-  (photo calorie estimation, 12a–12d) are complete. **Resume at the
-  responsive nav**, then workout recommendations.
+- **Nav overflow — resolved in M13.** It had made every page ~618 px wide at
+  375 px (mobile zoomed the app to ~60%). Now `scrollWidth == clientWidth` at
+  375, 600, 768, 900 and 1024 px, including with a 70-character email.
+- **Browser-pane tip:** when the preview pane is hidden or the app window is
+  behind others, the page is `visibilityState: "hidden"` and **doesn't
+  render**: screenshots and coordinate clicks time out, and anything
+  delivered in the rendering step never fires — `requestAnimationFrame`,
+  `matchMedia` `change` events (so the nav's reset-on-widen can't be checked
+  then), and CSS transitions. Layout reads (`getBoundingClientRect`, computed
+  styles) still work. Drive the page with DOM events, and ask for the pane to
+  be shown before testing anything render-driven. (Viewport *emulation*
+  doesn't fire `matchMedia` `change` either; resizing an iframe does.)
+- Milestones 11 (meal recommendations + per-user rate limit, 11a–11e), 12
+  (photo calorie estimation, 12a–12d) and 13 (responsive nav) are complete.
+  **Resume at workout recommendations.**
