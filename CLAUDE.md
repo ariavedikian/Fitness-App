@@ -44,6 +44,10 @@ fix is tracked as a follow-up; see *Current state*.)
 - **Frontend:** vanilla HTML/CSS/JS as **ES modules** — no framework, no build step
 - **Tests:** pytest + FastAPI `TestClient` (httpx)
 - **Outbound HTTP:** httpx (sync `Client`) for the Open Food Facts integration.
+- **AI:** the official Anthropic Python SDK (`anthropic` 1.x — built on `httpx2`,
+  a separate package that coexists with `httpx`), sync client, model
+  `claude-opus-4-8` by default (`AI_MODEL`), structured output via
+  `client.messages.parse()`. Load the `claude-api` skill before touching it.
 - Always work inside the **virtualenv** at `venv/`.
 
 ## Architecture
@@ -90,15 +94,19 @@ fitness-app/
 │   ├── models/              # user, profile, food, log_entry, exercise,
 │   │                        #   workout_entry, weight_entry
 │   ├── schemas/             # Pydantic shapes: user, profile, food, log, workout,
-│   │                        #   weight, analytics
+│   │                        #   weight, analytics, recommendation
 │   ├── services/            # business logic: user, profile, food, log, nutrition,
 │   │                        #   off_client (OFF adapter), search (LIKE-escape),
 │   │                        #   exercise, workout (MET math), workout_service,
-│   │                        #   weight_service, analytics_service
+│   │                        #   weight_service, analytics_service,
+│   │                        #   ai_client (Claude adapter), recommendation_service
 │   ├── api/                 # routers: auth, profile, foods, log, exercises,
-│   │                        #   workouts, weight, analytics, pages, health, deps
+│   │                        #   workouts, weight, analytics, recommendations,
+│   │                        #   pages, health, deps
 │   │                        # frontend: chart.js (shared SVG line chart +
-│   │                        #   sparkline); progress.js/analytics.js draw trends
+│   │                        #   sparkline); progress.js/analytics.js draw trends;
+│   │                        #   suggestions.js (meal ideas); meals.js (shared
+│   │                        #   time-of-day meal default)
 │   ├── static/{css,js}/     # main.css (design tokens); ES modules per feature
 │   └── templates/           # base + page templates (Jinja2)
 ├── alembic/                 # migrations (env.py reads DATABASE_URL from settings)
@@ -192,6 +200,41 @@ fitness-app/
     palette (`--chart-series-1..3`) was checked with the dataviz palette script
     for colourblind separation and ≥3:1 contrast on the surface; colour follows
     the macro in fixed order (never its daily rank), reinforced by a legend.
+25. **Claude crosses an adapter too** — `ai_client.py` is the only module that
+    imports `anthropic` (the OFF pattern, #15). Its pure half (system prompt,
+    `build_meal_prompt`, Pydantic result schema) is tested directly; its SDK
+    half calls `messages.parse()` with that schema, so replies arrive as
+    validated objects — no hand-parsing. Every failure (switched off, no key,
+    API error, refusal, unusable reply) becomes `AiUnavailableError`, and the
+    caller degrades (#17). **Gotcha (verified in SDK source):** `parse()`
+    validates *inside* the call, so a reply cut off mid-JSON or breaking a
+    constraint raises pydantic `ValidationError` from `parse()` itself rather
+    than returning `parsed_output=None` — it must be caught. Constraints the
+    API can't enforce (`ge=0`, max items) are sent as description hints and
+    enforced client-side by the SDK.
+26. **AI is opt-in, server-owned, and cost-guarded** — every call is billed,
+    so `AI_ENABLED` defaults to false and doubles as a kill switch; the key is
+    a `SecretStr`. The server computes the remaining budget (goals − eaten,
+    calories net of exercise, via `nutrition.remaining_budget`) and the client
+    sends only the meal; the idea count is fixed. Only numbers and an enum
+    reach the prompt — never user-typed text — so there's no prompt-injection
+    surface. `POST` (not `GET`, which browsers/link previewers can prefetch);
+    under `MIN_CALORIES_TO_SUGGEST` (100 kcal) left, the API answers
+    `budget_spent` without calling Claude; the UI allows one request in
+    flight; timeout 60 s and 1 retry instead of the SDK's 10 min / 2.
+27. **Model output is untrusted, and framed as ideas, not advice** — names and
+    descriptions are rendered with `textContent` only. The system prompt and
+    an always-visible disclaimer frame suggestions as general meal ideas with
+    estimated nutrition, not nutrition or medical advice; estimates are whole
+    numbers (decimals would claim precision they don't have). The API schema
+    mirrors rather than reuses the adapter's model, so a field added for
+    Claude can't leak to the browser unnoticed.
+28. **AI tests run the real SDK over a mock transport** — adapter tests build a
+    real `anthropic.Anthropic` client backed by `httpx2.MockTransport`, so the
+    SDK's own request building and `parse()` validation run (a hand-rolled
+    fake would accept a misspelled parameter silently). Service/API tests stub
+    one level up, at `ai_client.recommend_meals`. Nothing hits the network and
+    no key is needed.
 
 ## Coding conventions
 
@@ -225,8 +268,14 @@ fitness-app/
   (overrides `get_db`). Test files mirror the module under test.
 - Assert real behavior (e.g. duplicate insert raises `IntegrityError`), and
   hand-compute expected numbers in comments for domain math.
+- **Third parties are off in tests:** the autouse `_offline` fixture disables
+  OFF *and* AI (even if `.env` enables AI with a real key, so the suite can
+  never make billed calls). The `ai_on` fixture switches AI back on with a
+  fake key; the test must still stand in for Claude (see decision #28).
+- Goals depend on today's date (age), so tests that need them read
+  `/api/profile/goals` rather than hard-coding numbers that rot on a birthday.
 
-## Completed features (milestones 1–10)
+## Completed features (milestones 1–10, plus 11's meal recommendations)
 
 1. **Foundation** — venv, config system, `/health`, pytest, git.
 2. **DB + auth** — `User` model; register / login / logout / `me`; bcrypt; sessions.
@@ -284,11 +333,30 @@ fitness-app/
     **macros** (protein/carbs/fat, three lines in a validated colourblind-safe
     palette) over a 7/30/90-day range. The dashboard Weight card gains a
     sparkline of recent weigh-ins.
+11. **AI meal recommendations** (first Claude feature; sub-steps 11a–11d) —
+    `ai_client.py` adapts the Anthropic SDK: `MealRequest` (remaining budget +
+    meal type + count) → pure prompt builder → `messages.parse()` with a
+    Pydantic `MealRecommendations` schema → validated `MealSuggestion`s, or
+    `AiUnavailableError`. Settings: `AI_ENABLED` (default off),
+    `ANTHROPIC_API_KEY`, `AI_MODEL` (`claude-opus-4-8`), `AI_EFFORT`
+    (`medium`, adaptive thinking), `AI_TIMEOUT_SECONDS`, `AI_MAX_RETRIES`.
+    `recommendation_service.suggest_meals` computes today's remaining budget
+    from goals + meals + workouts (`nutrition.remaining_budget`) and asks for
+    3 ideas. `POST /api/recommendations/meals {meal_type}` → 200
+    `ok`/`budget_spent`; 503 when AI is off or failing; 409 without a profile.
+    The dashboard shows a full-width **Meal ideas** card (only when AI is
+    enabled): meal picker defaulted by time of day (shared `meals.js`), one
+    request in flight, loading/error/budget-spent states, and a not-advice
+    disclaimer.
 
 ## Planned milestones (next → later)
 
-- **NEXT — AI features** — meal recommendations, photo calorie estimation,
-  personalized workout recommendations.
+- **NEXT — remaining AI features** — photo calorie estimation (Claude vision:
+  base64 image → structured nutrition estimate, reusing the `ai_client`
+  pattern) and personalized workout recommendations.
+- **Before AI goes beyond a demo** — a per-user rate limit on the billed AI
+  endpoint(s) (the UI's one-in-flight guard stops double-clicks, not a user
+  deliberately spamming the API).
 - **Later food-data enhancements** — USDA FoodData Central as a second source
   (better whole-food data; needs a free key), and barcode-scan lookup (the OFF
   `fetch_off_product` path already supports barcodes).
@@ -310,16 +378,37 @@ alembic revision --autogenerate -m "describe change"   # then READ the file
 alembic upgrade head
 ```
 
+Turn on AI meal ideas (optional — **every suggestion is a billed API call**):
+add `AI_ENABLED=true` and `ANTHROPIC_API_KEY=sk-ant-...` to `.env` (see
+`.env.example` for the tuning settings), then restart the server. With either
+missing, the dashboard simply shows no Meal ideas card.
+
+To work on the AI UI **without a key or cost**, run the app from a throwaway
+script that sets `settings.ai_enabled = True`, a fake `anthropic_api_key`, and
+replaces `ai_client.recommend_meals` with a function returning canned
+`MealSuggestion`s (add a `time.sleep` to see the loading state). The service
+calls it through the module attribute, so the patch takes effect.
+
 ## Current state
 
-- **181 tests passing.** Eight migrations applied (users → profiles → foods →
+- **218 tests passing.** Eight migrations applied (users → profiles → foods →
   log_entries → foods.off_id → exercises → workout_entries → weight_entries).
-  Milestone 10 (charts/analytics) added no schema — it reads existing tables.
+  Milestones 10 and 11 added no schema — they read existing tables.
 - **External calls in tests are disabled by default** via an autouse `_offline`
-  fixture in `tests/conftest.py` (sets `settings.off_enabled = False`); tests that
-  exercise the OFF path re-enable it and stub `off_client` — nothing hits the
-  network. OFF search uses a **sync** `httpx.Client` (chosen over the originally
-  planned async, for consistency with the sync route/DB stack).
+  fixture in `tests/conftest.py` (sets `settings.off_enabled` *and*
+  `settings.ai_enabled` to `False`); tests that exercise the OFF path re-enable
+  it and stub `off_client`, and AI tests use the `ai_on` fixture plus a
+  mock-transport SDK client or a stubbed `ai_client.recommend_meals` — nothing
+  hits the network. OFF search uses a **sync** `httpx.Client` (chosen over the
+  originally planned async, for consistency with the sync route/DB stack).
+- **AI meal ideas have only been exercised against a stub** (every UI state
+  browser-verified with a faked `recommend_meals`). No live Claude call has
+  been made yet, so real latency/quality and the `AI_EFFORT=medium` default
+  are untuned — do one deliberate live test (a few cents) before relying on
+  it. `claude-opus-5-5` is newer and cheaper than the default `opus-4-8`
+  ($4/$20 vs $5/$25 per MTok) and accepts the same request; switching is
+  `AI_MODEL` in `.env` (the `claude-api` skill then recommends adding its
+  refusal `fallbacks`).
 - **Dev accounts in `fittrack.db`** (created while testing; safe to ignore or
   delete the DB and re-migrate/re-seed for a clean slate):
   - `demo@example.com` / `correct-horse-battery` — has a profile, one OFF food
@@ -335,7 +424,13 @@ alembic upgrade head
   (bit us on dashboard.js in M9 *and* M10 — a plain reload keeps the old module;
   `import('/static/js/x.js?v='+Date.now())` confirms the fresh one). Needs
   cache-busting/versioned asset URLs — tracked as a follow-up task.
-- **Nav is filling up:** the top nav is now 7 links (Dashboard/Diary/Foods/
-  Workouts/Progress/Analytics/Profile). It still fits without overflow, but a
-  responsive/collapsing nav is worth doing before adding more pages.
-- Milestone 10 is complete and committed-ready. **Resume at AI features.**
+- **Known gap — nav overflow:** the top nav (7 links + email + Log out) now
+  **overflows horizontally at ~716 px** wide (confirmed in M11c: `scrollWidth`
+  762 vs `clientWidth` 716; only `.site-nav` overflows). A responsive/collapsing
+  nav is needed before adding more pages — tracked as a follow-up task.
+- **Browser-pane tip:** when the desktop app window is behind other windows,
+  the preview pane can't draw, so screenshots and coordinate clicks time out;
+  drive the page with DOM events and read state with `read_page`/JS instead.
+- Milestone 11's meal recommendations (11a–11d) are complete and committed.
+  **Resume at the remaining AI features** (photo calorie estimation, then
+  workout recommendations); the per-user rate limit is the open decision.
