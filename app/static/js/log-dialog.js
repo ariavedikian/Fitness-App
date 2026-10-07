@@ -6,20 +6,12 @@
  */
 
 import { ApiError, apiFetch } from "./api.js";
+import { defaultMeal } from "./meals.js";
 
 let dialog;
 let form;
 let currentFood;
 let onLoggedCallback;
-
-/** Sensible default meal based on the time of day. */
-function defaultMeal() {
-  const hour = new Date().getHours();
-  if (hour < 11) return "breakfast";
-  if (hour < 16) return "lunch";
-  if (hour < 21) return "dinner";
-  return "snack";
-}
 
 /** The amount entered, converted to grams (the unit the API stores). */
 function gramsFromForm() {

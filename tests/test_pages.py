@@ -52,6 +52,27 @@ def test_dashboard_renders_for_signed_in_users(client: TestClient) -> None:
     assert SIGNUP["email"] in response.text
 
 
+def test_dashboard_offers_meal_ideas_when_ai_is_on(
+    client: TestClient, ai_on: None
+) -> None:
+    sign_in(client)
+
+    html = client.get("/dashboard").text
+
+    assert "data-suggest" in html
+    assert "/static/js/suggestions.js" in html
+
+
+def test_dashboard_hides_meal_ideas_when_ai_is_off(client: TestClient) -> None:
+    # No dead button, and the script isn't even loaded.
+    sign_in(client)
+
+    html = client.get("/dashboard").text
+
+    assert "data-suggest" not in html
+    assert "suggestions.js" not in html
+
+
 @pytest.mark.parametrize("path", ["/login", "/register"])
 def test_auth_pages_send_signed_in_users_to_the_dashboard(
     client: TestClient, path: str

@@ -103,6 +103,38 @@
         No workouts yet. <a href="/workouts">Log a workout</a>.
       </p>
     </article>
+
+    {% if ai_enabled %}
+    {# AI meal ideas. Shares the goals' ready/empty states: ideas are sized to
+       the goals, so without a profile there is nothing to size them to. #}
+    <article class="card card--wide" data-suggest>
+      <h2 class="card__title">Meal ideas</h2>
+      <div data-goals-ready hidden>
+        <form class="suggest__controls" data-suggest-form>
+          <label class="suggest__label" for="suggest-meal">Ideas for</label>
+          <select id="suggest-meal" name="meal_type" class="suggest__select">
+            <option value="breakfast">Breakfast</option>
+            <option value="lunch">Lunch</option>
+            <option value="dinner">Dinner</option>
+            <option value="snack">Snack</option>
+          </select>
+          <button type="submit" class="button button--primary">
+            Suggest meals
+          </button>
+        </form>
+        <p class="search-notice" data-suggest-status role="status"
+           aria-live="polite" hidden></p>
+        <ul class="suggestion-list" data-suggest-list></ul>
+        <p class="card__meta">
+          AI-generated ideas with estimated nutrition, sized to what's left of
+          today's budget. General suggestions, not nutrition or medical advice.
+        </p>
+      </div>
+      <p class="card__empty" data-goals-empty hidden>
+        <a href="/profile">Set up your profile</a> to get meal ideas.
+      </p>
+    </article>
+    {% endif %}
   </div>
 {% endblock %}
 
@@ -111,4 +143,10 @@
     import { initDashboard } from "/static/js/dashboard.js";
     initDashboard();
   </script>
+  {% if ai_enabled %}
+  <script type="module">
+    import { initSuggestions } from "/static/js/suggestions.js";
+    initSuggestions();
+  </script>
+  {% endif %}
 {% endblock %}

@@ -15,6 +15,7 @@ from starlette.responses import Response
 from app.api.deps import get_optional_user
 from app.core.templates import templates
 from app.models import User
+from app.services import ai_client
 
 router = APIRouter(tags=["pages"], include_in_schema=False)
 
@@ -53,7 +54,13 @@ def dashboard_page(
     # the data itself is guarded by get_current_user on the /api routes.
     if user is None:
         return RedirectResponse("/login", REDIRECT)
-    return templates.TemplateResponse(request, "dashboard.html", {"user": user})
+    # The meal-ideas card is rendered only when AI is on and configured, so a
+    # server without it shows no dead button (and doesn't load its script).
+    return templates.TemplateResponse(
+        request,
+        "dashboard.html",
+        {"user": user, "ai_enabled": ai_client.is_enabled()},
+    )
 
 
 @router.get("/profile", response_class=HTMLResponse)
