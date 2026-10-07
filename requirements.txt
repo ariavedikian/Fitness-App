@@ -17,3 +17,6 @@ httpx==0.28.1
 # Official Claude SDK (AI meal suggestions). The 1.x line is built on httpx2,
 # a separate package that installs alongside httpx without conflict.
 anthropic==1.12.0
+# Parses multipart/form-data uploads (FastAPI's File/UploadFile need it) —
+# used for meal-photo uploads.
+python-multipart==0.0.32

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Food, LogEntry, User
-from app.schemas.log import LogEntryCreate
+from app.schemas.log import CustomLogCreate, LogEntryCreate
 from app.services import nutrition
 from app.services.nutrition import Nutrition
 
@@ -39,6 +39,42 @@ def create_entry(db: Session, user: User, payload: LogEntryCreate) -> LogEntry:
     db.commit()
     db.refresh(entry)
     return entry
+
+
+def create_custom_entries(
+    db: Session, user: User, payload: CustomLogCreate
+) -> list[LogEntry]:
+    """Log foods that aren't in the catalogue, nutrition supplied by the
+    client — e.g. a reviewed photo estimate.
+
+    Each item becomes an ordinary snapshot entry with no food behind it
+    (``food_id`` is NULL), so it reads, totals and deletes exactly like any
+    other. Nothing is added to the shared food catalogue: one person's
+    estimate isn't a food everyone should find in search. All the items are
+    committed together, so a meal is never half-logged.
+    """
+    day = payload.date or date_type.today()
+    entries = [
+        LogEntry(
+            user_id=user.id,
+            food_id=None,
+            date=day,
+            meal_type=payload.meal_type,
+            quantity_grams=item.quantity_grams,
+            food_name=item.name,
+            brand=None,
+            calories_per_100g=item.calories_per_100g,
+            protein_per_100g=item.protein_per_100g,
+            carbs_per_100g=item.carbs_per_100g,
+            fat_per_100g=item.fat_per_100g,
+        )
+        for item in payload.items
+    ]
+    db.add_all(entries)
+    db.commit()
+    for entry in entries:
+        db.refresh(entry)
+    return entries
 
 
 def get_day_entries(db: Session, user: User, day: date_type) -> list[LogEntry]:

@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.recommendations import _describe_wait
+from app.api.ai_errors import describe_wait
 from app.core.config import settings
 from app.models import AiRequest, LogEntry, MealType, User, WorkoutEntry
 from app.services import ai_client
@@ -332,4 +332,4 @@ def test_a_failed_call_still_counts(
     ],
 )
 def test_wait_is_described_rounding_up(seconds: int, wording: str) -> None:
-    assert _describe_wait(seconds) == wording
+    assert describe_wait(seconds) == wording

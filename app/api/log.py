@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models import LogEntry, User
-from app.schemas.log import DayLogRead, LogEntryCreate, LogEntryRead, NutritionRead
+from app.schemas.log import (
+    CustomLogCreate,
+    DayLogRead,
+    LogEntryCreate,
+    LogEntryRead,
+    NutritionRead,
+)
 from app.services import log_service
 from app.services.nutrition import Nutrition
 
@@ -55,6 +61,21 @@ def create_log_entry(
             status_code=status.HTTP_404_NOT_FOUND, detail="Food not found."
         ) from exc
     return _entry_read(entry)
+
+
+@router.post(
+    "/custom",
+    response_model=list[LogEntryRead],
+    status_code=status.HTTP_201_CREATED,
+    summary="Log foods that aren't in the catalogue (e.g. a photo estimate)",
+)
+def create_custom_log_entries(
+    payload: CustomLogCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[LogEntryRead]:
+    entries = log_service.create_custom_entries(db, current_user, payload)
+    return [_entry_read(entry) for entry in entries]
 
 
 @router.get("", response_model=DayLogRead, summary="Read a day's log")

@@ -1,14 +1,18 @@
 """Pydantic schemas for meal logging."""
 
 import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.models.log_entry import MealType
 
 # A generous upper bound to catch fat-finger input (e.g. grams typed where
 # servings were meant) without rejecting a legitimately large meal.
 MAX_QUANTITY_GRAMS = 10_000
+
+# Pure fat is 900 kcal/100 g — the physical ceiling for any real food.
+MAX_KCAL_PER_100G = 900
 
 
 class LogEntryCreate(BaseModel):
@@ -21,6 +25,30 @@ class LogEntryCreate(BaseModel):
     # datetime.date, spelled out because a field named `date` would otherwise
     # shadow the type in its own annotation. Defaults to today on the server.
     date: datetime.date | None = None
+
+
+class CustomFoodItem(BaseModel):
+    """A food that isn't in the catalogue, with its nutrition supplied by the
+    client (today: a photo estimate the user reviewed). The server can't
+    verify where these numbers came from, so it bounds them physically."""
+
+    name: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+    ]
+    quantity_grams: float = Field(gt=0, le=MAX_QUANTITY_GRAMS)
+    calories_per_100g: float = Field(ge=0, le=MAX_KCAL_PER_100G)
+    protein_per_100g: float = Field(ge=0, le=100)
+    carbs_per_100g: float = Field(ge=0, le=100)
+    fat_per_100g: float = Field(ge=0, le=100)
+
+
+class CustomLogCreate(BaseModel):
+    """Log one or more custom foods to a meal, all or nothing."""
+
+    meal_type: MealType
+    date: datetime.date | None = None  # defaults to today on the server
+    # A plate's worth, not a bulk import.
+    items: list[CustomFoodItem] = Field(min_length=1, max_length=20)
 
 
 class NutritionRead(BaseModel):
