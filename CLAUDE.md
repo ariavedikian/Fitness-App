@@ -47,7 +47,10 @@ fix is tracked as a follow-up; see *Current state*.)
 - **AI:** the official Anthropic Python SDK (`anthropic` 1.x — built on `httpx2`,
   a separate package that coexists with `httpx`), sync client, model
   `claude-opus-4-8` by default (`AI_MODEL`), structured output via
-  `client.messages.parse()`. Load the `claude-api` skill before touching it.
+  `client.messages.parse()` (text prompts and vision). Load the `claude-api`
+  skill before touching it.
+- **Uploads:** python-multipart (FastAPI's `File`/`UploadFile` need it) for
+  meal photos.
 - Always work inside the **virtualenv** at `venv/`.
 
 ## Architecture
@@ -94,20 +97,25 @@ fitness-app/
 │   ├── models/              # user, profile, food, log_entry, exercise,
 │   │                        #   workout_entry, weight_entry, ai_request
 │   ├── schemas/             # Pydantic shapes: user, profile, food, log, workout,
-│   │                        #   weight, analytics, recommendation
+│   │                        #   weight, analytics, recommendation, photo_estimate
 │   ├── services/            # business logic: user, profile, food, log, nutrition,
 │   │                        #   off_client (OFF adapter), search (LIKE-escape),
 │   │                        #   exercise, workout (MET math), workout_service,
 │   │                        #   weight_service, analytics_service,
-│   │                        #   ai_client (Claude adapter), recommendation_service,
-│   │                        #   ai_usage_service (per-user AI rate limit)
+│   │                        #   ai_client (Claude adapter: meal ideas + photo
+│   │                        #   estimates), recommendation_service,
+│   │                        #   photo_estimate_service, ai_usage_service
+│   │                        #   (per-user AI rate limit)
 │   ├── api/                 # routers: auth, profile, foods, log, exercises,
 │   │                        #   workouts, weight, analytics, recommendations,
-│   │                        #   pages, health, deps
+│   │                        #   photo_estimates, pages, health, deps,
+│   │                        #   ai_errors (shared 429 for AI routes)
 │   │                        # frontend: chart.js (shared SVG line chart +
 │   │                        #   sparkline); progress.js/analytics.js draw trends;
-│   │                        #   suggestions.js (meal ideas); meals.js (shared
-│   │                        #   time-of-day meal default)
+│   │                        #   suggestions.js (meal ideas); photo-estimate.js
+│   │                        #   (photo → review → log); meals.js (shared
+│   │                        #   time-of-day meal default); notice.js (shared
+│   │                        #   status lines for the AI features)
 │   ├── static/{css,js}/     # main.css (design tokens); ES modules per feature
 │   └── templates/           # base + page templates (Jinja2)
 ├── alembic/                 # migrations (env.py reads DATABASE_URL from settings)
@@ -218,8 +226,8 @@ fitness-app/
     a `SecretStr`. The server computes the remaining budget (goals − eaten,
     calories net of exercise, via `nutrition.remaining_budget`) and the client
     sends only the meal; the idea count is fixed. Only numbers and an enum
-    reach the prompt — never user-typed text — so there's no prompt-injection
-    surface. `POST` (not `GET`, which browsers/link previewers can prefetch);
+    reach the meal-ideas prompt — never user-typed text — so it has no
+    prompt-injection surface (photos can carry text; see #30). `POST` (not `GET`, which browsers/link previewers can prefetch);
     under `MIN_CALORIES_TO_SUGGEST` (100 kcal) left, the API answers
     `budget_spent` without calling Claude; the UI allows one request in
     flight; timeout 60 s and 1 retry instead of the SDK's 10 min / 2; and a
@@ -235,8 +243,10 @@ fitness-app/
     real `anthropic.Anthropic` client backed by `httpx2.MockTransport`, so the
     SDK's own request building and `parse()` validation run (a hand-rolled
     fake would accept a misspelled parameter silently). Service/API tests stub
-    one level up, at `ai_client.recommend_meals`. Nothing hits the network and
-    no key is needed.
+    one level up, at `ai_client.recommend_meals` / `ai_client.estimate_photo`.
+    Nothing hits the network and no key is needed. Every feature goes through
+    one private `_call()` (on/off check, model/effort/thinking, error
+    mapping), so a new AI feature adds only its prompt and schema.
 29. **AI calls are rate-limited per user, in the database** — `AI_DAILY_LIMIT`
     (default 20) billed requests per user per **rolling** 24 hours, shared by
     all AI features. Stored as one `AiRequest` row per call rather than in
@@ -255,6 +265,35 @@ fitness-app/
     time-zone naive, so `_as_utc` treats naive as UTC. A burst of simultaneous
     requests can overshoot by one — fine for a cost guard (an exact limit
     would lock the user's row).
+30. **Photo estimates: per-100 g + grams, reviewed before logging, never
+    stored** — Claude returns each item's estimated *weight* plus nutrition
+    *per 100 g* (the canonical form, #8), because the uncertain part of a
+    photo estimate is the portion, not what the food is: the user corrects the
+    grams in a review dialog and every figure rescales by one multiplication.
+    Nothing is logged without that review. The **browser** downscales to
+    ≤1568 px and re-encodes to JPEG before upload: about a third of Opus 4.8's
+    full-resolution (2576 px) image tokens, a few hundred KB instead of
+    several MB, metadata (incl. GPS) stripped, orientation applied, HEIC
+    converted where the browser can decode it. The **server** never trusts the
+    claimed type — `sniff_image_type` checks magic bytes (JPEG/PNG/GIF/WebP),
+    with a 3 MB cap read without loading more — and runs its checks
+    cheapest-first so a bad upload spends no AI allowance. The image lives
+    only in the request's memory. A photo *can* carry text (a sign, a label),
+    but the output schema bounds what it could do: odd items the user
+    reviews. Physical bounds (≤900 kcal/100 g, macros ≤100 g/100 g) reject
+    impossible estimates.
+31. **Custom logging trusts the client's numbers — bounded, never shared** —
+    `POST /api/log/custom` logs foods that aren't in the catalogue with
+    client-supplied nutrition. That's a deliberate exception to #16's "server
+    re-fetches": re-asking Claude at log time would cost money and change the
+    numbers, the user reviewed (and may have corrected) them, and they only
+    ever write to that user's own diary. Named for what the server
+    *guarantees* ("custom"), not where the numbers came from, since it can't
+    verify provenance. It bounds them physically (as above, plus ≤10 kg and
+    a stripped 1–200-char name), is all-or-nothing (1–20 items in one
+    transaction), and creates entries with `food_id` NULL — **never** `Food`
+    rows, because the catalogue is shared and one person's estimate isn't a
+    food everyone should find in search.
 
 ## Coding conventions
 
@@ -295,7 +334,7 @@ fitness-app/
 - Goals depend on today's date (age), so tests that need them read
   `/api/profile/goals` rather than hard-coding numbers that rot on a birthday.
 
-## Completed features (milestones 1–10, plus 11's meal recommendations)
+## Completed features (milestones 1–12)
 
 1. **Foundation** — venv, config system, `/health`, pytest, git.
 2. **DB + auth** — `User` model; register / login / logout / `me`; bcrypt; sessions.
@@ -371,13 +410,32 @@ fitness-app/
     enabled): meal picker defaulted by time of day (shared `meals.js`), one
     request in flight, loading/error/budget-spent/limit states, and a
     not-advice disclaimer.
+12. **Photo calorie estimation** (second Claude feature, vision; 12a–12d) —
+    `ai_client.estimate_photo(image, media_type)` sends the image then an
+    instruction and returns a `PhotoEstimate`: up to 10 items (name, estimated
+    grams, kcal/protein/carbs/fat per 100 g), a low/medium/high confidence and
+    a one-line note (empty items + "no food" note for a non-food photo).
+    `POST /api/photo-estimates` (multipart field `photo`): 503 when AI is off →
+    413 over 3 MB → 415 unless the magic bytes say JPEG/PNG/GIF/WebP → 429
+    when the shared allowance is used (feature `photo_estimate`) → 503 if
+    Claude fails → 200 with the estimate (via `photo_estimate_service`).
+    `POST /api/log/custom` logs reviewed items as ordinary snapshot entries
+    with no food behind them (decision #31). The Foods page gains **Estimate
+    from a photo** (only when AI is enabled; no `capture`, so phones offer the
+    camera *and* the library): the browser downscales/re-encodes the photo
+    (decision #30), then a review dialog lists each item with editable grams
+    that rescale its nutrition live, Remove, running totals (summed unrounded,
+    rounded once), and a meal picker; "Log N items" saves only what was
+    reviewed.
 
 ## Planned milestones (next → later)
 
-- **NEXT — remaining AI features** — photo calorie estimation (Claude vision:
-  base64 image → structured nutrition estimate, reusing the `ai_client`
-  pattern; record it in `ai_requests` under its own feature name so it shares
-  the per-user allowance) and personalized workout recommendations.
+- **NEXT — responsive navigation (high priority)** — the 7-link top nav makes
+  every page ~618 px wide on a 375 px phone, so mobile browsers zoom the whole
+  app out to ~60% (see *Current state*). Fix before adding pages.
+- **Then — personalized workout recommendations**, the last planned AI
+  feature: same `ai_client._call` + schema pattern, recorded in
+  `ai_requests` under its own feature name so it shares the allowance.
 - **Later food-data enhancements** — USDA FoodData Central as a second source
   (better whole-food data; needs a free key), and barcode-scan lookup (the OFF
   `fetch_off_product` path already supports barcodes).
@@ -399,35 +457,41 @@ alembic revision --autogenerate -m "describe change"   # then READ the file
 alembic upgrade head
 ```
 
-Turn on AI meal ideas (optional — **every suggestion is a billed API call**):
-add `AI_ENABLED=true` and `ANTHROPIC_API_KEY=sk-ant-...` to `.env` (see
-`.env.example` for the tuning settings), then restart the server. With either
-missing, the dashboard simply shows no Meal ideas card.
+Turn on the AI features — meal ideas and photo estimates (optional — **every
+suggestion or estimate is a billed API call**): add `AI_ENABLED=true` and
+`ANTHROPIC_API_KEY=sk-ant-...` to `.env` (see `.env.example` for the tuning
+settings), then restart the server. With either missing, the dashboard shows
+no Meal ideas card and the Foods page no photo button.
 
-To work on the AI UI **without a key or cost**, run the app from a throwaway
+To work on the AI UIs **without a key or cost**, run the app from a throwaway
 script that sets `settings.ai_enabled = True`, a fake `anthropic_api_key`, and
-replaces `ai_client.recommend_meals` with a function returning canned
-`MealSuggestion`s (add a `time.sleep` to see the loading state). The service
-calls it through the module attribute, so the patch takes effect.
+replaces `ai_client.recommend_meals` / `ai_client.estimate_photo` with
+functions returning canned `MealSuggestion`s / a `PhotoEstimate` (add a
+`time.sleep` to see the loading state; flag files are a handy way to switch a
+fake into "no food" or "Claude is down" without a restart). The services call
+them through the module attribute, so the patch takes effect. To feed the
+photo UI without a file picker, build a `File` from a canvas and assign it to
+the input with a `DataTransfer`, then dispatch `change`.
 
 ## Current state
 
-- **233 tests passing.** Nine migrations applied (users → profiles → foods →
+- **271 tests passing.** Nine migrations applied (users → profiles → foods →
   log_entries → foods.off_id → exercises → workout_entries → weight_entries →
-  ai_requests). Milestone 10 and 11a–d added no schema; 11e added
-  `ai_requests` (the rate-limit log).
+  ai_requests). Of Milestones 10–12 only 11e changed the schema (it added
+  `ai_requests`, the rate-limit log); photo estimates reuse `log_entries`.
 - **External calls in tests are disabled by default** via an autouse `_offline`
   fixture in `tests/conftest.py` (sets `settings.off_enabled` *and*
   `settings.ai_enabled` to `False`); tests that exercise the OFF path re-enable
   it and stub `off_client`, and AI tests use the `ai_on` fixture plus a
-  mock-transport SDK client or a stubbed `ai_client.recommend_meals` — nothing
-  hits the network. OFF search uses a **sync** `httpx.Client` (chosen over the
+  mock-transport SDK client or a stubbed `ai_client.recommend_meals` /
+  `estimate_photo` — nothing hits the network. OFF search uses a **sync** `httpx.Client` (chosen over the
   originally planned async, for consistency with the sync route/DB stack).
-- **AI meal ideas have only been exercised against a stub** (every UI state
-  browser-verified with a faked `recommend_meals`). No live Claude call has
-  been made yet, so real latency/quality and the `AI_EFFORT=medium` default
-  are untuned — do one deliberate live test (a few cents) before relying on
-  it. `claude-opus-5-5` is newer and cheaper than the default `opus-4-8`
+- **Both AI features have only been exercised against stubs** (every UI state
+  browser-verified with faked `recommend_meals` / `estimate_photo`). No live
+  Claude call has been made yet, so real latency, output quality (including
+  how well portions are judged from a photo) and the `AI_EFFORT=medium`
+  default are untuned — do a deliberate live test (a few cents) before
+  relying on them. `claude-opus-5-5` is newer and cheaper than the default `opus-4-8`
   ($4/$20 vs $5/$25 per MTok) and accepts the same request; switching is
   `AI_MODEL` in `.env` (the `claude-api` skill then recommends adding its
   refusal `fallbacks`).
@@ -446,13 +510,15 @@ calls it through the module attribute, so the patch takes effect.
   (bit us on dashboard.js in M9 *and* M10 — a plain reload keeps the old module;
   `import('/static/js/x.js?v='+Date.now())` confirms the fresh one). Needs
   cache-busting/versioned asset URLs — tracked as a follow-up task.
-- **Known gap — nav overflow:** the top nav (7 links + email + Log out) now
-  **overflows horizontally at ~716 px** wide (confirmed in M11c: `scrollWidth`
-  762 vs `clientWidth` 716; only `.site-nav` overflows). A responsive/collapsing
-  nav is needed before adding more pages — tracked as a follow-up task.
+- **Known gap — nav overflow (high priority):** the top nav (7 links + email +
+  Log out) doesn't wrap or collapse. At ~716 px it overflows (`scrollWidth`
+  762 vs 716, M11c); **at a 375 px phone width it makes every page ~618 px
+  wide, so mobile browsers zoom the whole app out to ~60%** (found in M12c;
+  only `.site-nav` and its children overflow — the page content itself fits).
+  The responsive/collapsing nav is the next task (tracked as a follow-up).
 - **Browser-pane tip:** when the desktop app window is behind other windows,
   the preview pane can't draw, so screenshots and coordinate clicks time out;
   drive the page with DOM events and read state with `read_page`/JS instead.
-- Milestone 11's meal recommendations (11a–11e, including the per-user rate
-  limit) are complete. **Resume at the remaining AI features** (photo calorie
-  estimation, then workout recommendations).
+- Milestones 11 (meal recommendations + per-user rate limit, 11a–11e) and 12
+  (photo calorie estimation, 12a–12d) are complete. **Resume at the
+  responsive nav**, then workout recommendations.
