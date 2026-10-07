@@ -63,6 +63,29 @@ def test_dashboard_offers_meal_ideas_when_ai_is_on(
     assert "/static/js/suggestions.js" in html
 
 
+def test_foods_page_offers_photo_estimates_when_ai_is_on(
+    client: TestClient, ai_on: None
+) -> None:
+    sign_in(client)
+
+    html = client.get("/foods").text
+
+    assert "data-photo" in html
+    assert 'id="photo-dialog"' in html
+    assert "/static/js/photo-estimate.js" in html
+
+
+def test_foods_page_hides_photo_estimates_when_ai_is_off(
+    client: TestClient,
+) -> None:
+    sign_in(client)
+
+    html = client.get("/foods").text
+
+    assert "data-photo" not in html
+    assert "photo-estimate.js" not in html
+
+
 def test_dashboard_hides_meal_ideas_when_ai_is_off(client: TestClient) -> None:
     # No dead button, and the script isn't even loaded.
     sign_in(client)

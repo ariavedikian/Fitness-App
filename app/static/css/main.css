@@ -1025,6 +1025,61 @@ a {
   color: var(--color-text-muted);
 }
 
+/* ------------------------------------------------------- photo estimates */
+.photo-entry {
+  margin-bottom: var(--space-5);
+}
+
+.photo-entry__hint {
+  margin-top: var(--space-2);
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+/* The review dialog lists several rows with a grams field each. */
+.dialog--wide {
+  width: min(36rem, calc(100vw - 2rem));
+}
+
+.estimate-list {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Rows reuse .diary-entry. On a phone they wrap, so the name keeps a readable
+ * width rather than being squeezed beside the grams field and Remove. */
+.estimate-item {
+  flex-wrap: wrap;
+}
+
+.estimate-item .diary-entry__info {
+  flex: 1 1 12rem;
+}
+
+.estimate-item__grams {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.estimate-item__grams input {
+  width: 5.5rem;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: inherit;
+  /* 1rem prevents iOS Safari from zooming in when the field is focused. */
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.estimate-item__grams input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-color: var(--color-accent);
+}
+
 /* ------------------------------------------------------------ wider screens */
 @media (min-width: 40rem) {
   .site-nav__email {

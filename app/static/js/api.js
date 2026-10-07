@@ -43,15 +43,19 @@ function readDetail(body, status) {
  * @param {string} path     e.g. "/api/auth/login"
  * @param {object} [options]
  * @param {string} [options.method="GET"]
- * @param {object} [options.body]  serialised to JSON when present
+ * @param {object|FormData} [options.body]  serialised to JSON when present;
+ *   a FormData (a file upload) is sent as multipart/form-data
  * @returns {Promise<object|null>} parsed body, or null for 204 responses
  * @throws {ApiError} when the response status is not 2xx
  */
 export async function apiFetch(path, { method = "GET", body, signal } = {}) {
+  // A FormData body must go out as-is, with no Content-Type of our own: the
+  // browser sets multipart/form-data *with* the boundary the parts need.
+  const isForm = body instanceof FormData;
   const response = await fetch(path, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : {},
-    body: body ? JSON.stringify(body) : undefined,
+    headers: body && !isForm ? { "Content-Type": "application/json" } : {},
+    body: body && !isForm ? JSON.stringify(body) : body,
     // Send the session cookie. Same-origin is already the default, but
     // stating it makes the dependency on the cookie explicit.
     credentials: "same-origin",

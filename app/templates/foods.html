@@ -8,6 +8,23 @@
     <p class="page-header__subtitle">Find a food and add it to your log.</p>
   </section>
 
+  {% if ai_enabled %}
+  {# Says where the photo goes *before* it's chosen, not after it's sent. #}
+  <div class="photo-entry" data-photo>
+    <button type="button" class="button button--ghost" data-photo-button>
+      Estimate from a photo
+    </button>
+    <input type="file" accept="image/*" data-photo-input hidden />
+    <p class="photo-entry__hint">
+      Claude (by Anthropic) identifies the food and estimates portions. Your
+      photo is used only for the estimate and isn't saved by FitTrack, and you
+      review everything before it's logged.
+    </p>
+    <p class="search-notice" data-photo-status role="status" aria-live="polite"
+       hidden></p>
+  </div>
+  {% endif %}
+
   <div class="search">
     <label class="search__label" for="food-search">Search foods</label>
     <input
@@ -70,6 +87,40 @@
       </div>
     </form>
   </dialog>
+
+  {% if ai_enabled %}
+  {# Review an AI photo estimate: nothing is logged until this is submitted. #}
+  <dialog id="photo-dialog" class="dialog dialog--wide"
+          aria-labelledby="photo-dialog-title">
+    <form class="dialog__form">
+      <h2 class="dialog__title" id="photo-dialog-title">Review the estimate</h2>
+      <p class="dialog__hint" data-photo-note></p>
+      <p class="form-error" data-error hidden></p>
+
+      <ul class="estimate-list" data-photo-items></ul>
+      <p class="dialog__preview" data-photo-total></p>
+
+      <div class="field">
+        <label for="photo-meal">Meal</label>
+        <select id="photo-meal" name="meal" required>
+          <option value="breakfast">Breakfast</option>
+          <option value="lunch">Lunch</option>
+          <option value="dinner">Dinner</option>
+          <option value="snack">Snack</option>
+        </select>
+      </div>
+      <p class="dialog__hint">
+        These are AI estimates. Check the portions, and remove anything that
+        isn't right, before logging.
+      </p>
+
+      <div class="dialog__actions">
+        <button type="button" class="button button--ghost" data-cancel>Cancel</button>
+        <button type="submit" class="button button--primary">Log items</button>
+      </div>
+    </form>
+  </dialog>
+  {% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -88,4 +139,19 @@
     });
     initFoodSearch();
   </script>
+  {% if ai_enabled %}
+  <script type="module">
+    import { initPhotoEstimate } from "/static/js/photo-estimate.js";
+
+    initPhotoEstimate({
+      onLogged: ({ count, meal }) => {
+        const status = document.getElementById("log-status");
+        status.textContent =
+          `Added ${count} ${count === 1 ? "item" : "items"} to ${meal}. ` +
+          `View them in your diary.`;
+        status.hidden = false;
+      },
+    });
+  </script>
+  {% endif %}
 {% endblock %}

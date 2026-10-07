@@ -78,7 +78,13 @@ def foods_page(
 ) -> Response:
     if user is None:
         return RedirectResponse("/login", REDIRECT)
-    return templates.TemplateResponse(request, "foods.html", {"user": user})
+    # The photo-estimate control is rendered only when AI is on (as on the
+    # dashboard), so there's never a button that can't work.
+    return templates.TemplateResponse(
+        request,
+        "foods.html",
+        {"user": user, "ai_enabled": ai_client.is_enabled()},
+    )
 
 
 @router.get("/diary", response_class=HTMLResponse)

@@ -6,18 +6,9 @@
  *  the one-request-at-a-time guard below.
  */
 
-import { ApiError, apiFetch } from "./api.js";
+import { apiFetch } from "./api.js";
 import { defaultMeal } from "./meals.js";
-
-/** Show a message in the card's status line, in a notice tone (reusing the
- *  search page's notice styles: "warn" is neutral, "error" is the danger
- *  tone). Pass null to hide it. */
-function setStatus(el, message, tone = "warn") {
-  el.hidden = message === null;
-  el.textContent = message ?? "";
-  el.classList.toggle("search-notice--warn", tone === "warn");
-  el.classList.toggle("search-notice--error", tone === "error");
-}
+import { setNotice, showRequestError } from "./notice.js";
 
 /** One idea as a list item. Model output is untrusted text, so everything
  *  goes through textContent — never innerHTML. */
@@ -72,7 +63,7 @@ export function initSuggestions() {
     button.textContent = "Thinking…";
     list.replaceChildren();
     list.setAttribute("aria-busy", "true");
-    setStatus(status, "Finding ideas that fit what's left of today…");
+    setNotice(status, "Finding ideas that fit what's left of today…");
 
     try {
       const result = await apiFetch("/api/recommendations/meals", {
@@ -80,25 +71,16 @@ export function initSuggestions() {
         body: { meal_type: select.value },
       });
       if (result.status === "budget_spent") {
-        setStatus(
+        setNotice(
           status,
           "You've used today's calorie budget, so there's nothing to suggest right now.",
         );
       } else {
-        setStatus(status, null);
+        setNotice(status, null);
         list.append(...result.suggestions.map(renderSuggestion));
       }
     } catch (error) {
-      // The API's 503/409/429 messages are written for people; anything else
-      // (e.g. the network dropping) gets a generic retry hint. Hitting the
-      // usage limit isn't a failure, so it gets the neutral tone.
-      setStatus(
-        status,
-        error instanceof ApiError
-          ? error.detail
-          : "Couldn't reach FitTrack. Check your connection and try again.",
-        error instanceof ApiError && error.status === 429 ? "warn" : "error",
-      );
+      showRequestError(status, error);
     } finally {
       list.removeAttribute("aria-busy");
       button.textContent = idleLabel;
