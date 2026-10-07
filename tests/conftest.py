@@ -8,6 +8,7 @@ from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -33,6 +34,17 @@ def _offline(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(settings, "off_enabled", False)
     monkeypatch.setattr(settings, "ai_enabled", False)
+
+
+@pytest.fixture
+def ai_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Switch AI suggestions on with a fake key (``_offline`` forces them off).
+
+    Only the switch — the test must still stand in for Claude itself, either
+    by injecting a mock-transport SDK client or by stubbing the adapter.
+    """
+    monkeypatch.setattr(settings, "ai_enabled", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", SecretStr("sk-ant-test"))
 
 
 @pytest.fixture

@@ -235,7 +235,9 @@ def recommend_meals(
             exc.request_id,
             exc.message,
         )
-        raise AiUnavailableError(f"Claude rejected the request ({exc.status_code})") from exc
+        raise AiUnavailableError(
+            f"Claude rejected the request ({exc.status_code})"
+        ) from exc
     except anthropic.APIError as exc:
         # Transient — rate limit, overload, 5xx, timeout, network. The SDK has
         # already retried (``ai_max_retries``) by the time this surfaces.

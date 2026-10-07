@@ -212,3 +212,21 @@ def scale_per_100g(
         carbs_g=carbs_per_100g * factor,
         fat_g=fat_per_100g * factor,
     )
+
+
+def remaining_budget(
+    goals: DailyGoals, eaten: Nutrition, burned: float = 0.0
+) -> Nutrition:
+    """What's left of the day's targets after what's been eaten.
+
+    Calories are *net*: exercise adds its burn back to the budget, the same
+    rule the dashboard shows (remaining = goal − eaten + burned). Macros don't
+    net out — a run burns energy, not grams of protein. Unrounded, and
+    negative once a target is exceeded; callers decide how to present that.
+    """
+    return Nutrition(
+        calories=goals.calories - eaten.calories + burned,
+        protein_g=goals.macros.protein_g - eaten.protein_g,
+        carbs_g=goals.macros.carbs_g - eaten.carbs_g,
+        fat_g=goals.macros.fat_g - eaten.fat_g,
+    )

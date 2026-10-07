@@ -48,13 +48,6 @@ SUGGESTION = {
 }
 
 
-@pytest.fixture
-def ai_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Switch the feature on with a fake key (conftest forces it off)."""
-    monkeypatch.setattr(settings, "ai_enabled", True)
-    monkeypatch.setattr(settings, "anthropic_api_key", SecretStr("sk-ant-test"))
-
-
 def _message(text: str | None, *, stop_reason: str = "end_turn") -> dict:
     """A Messages API response body; ``text=None`` means no content blocks."""
     return {

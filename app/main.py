@@ -17,6 +17,7 @@ from app.api import (
     log,
     pages,
     profile,
+    recommendations,
     weight,
     workouts,
 )
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(workouts.router)
     app.include_router(weight.router)
     app.include_router(analytics.router)
+    app.include_router(recommendations.router)
     app.include_router(pages.router)
 
     return app

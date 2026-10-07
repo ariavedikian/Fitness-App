@@ -11,6 +11,7 @@ from app.services.nutrition import (
     DailyGoals,
     Goal,
     MacroSplit,
+    Macros,
     Nutrition,
     Sex,
     calculate_bmr,
@@ -18,6 +19,7 @@ from app.services.nutrition import (
     calculate_goals,
     calculate_macros,
     calculate_tdee,
+    remaining_budget,
     scale_per_100g,
 )
 
@@ -138,3 +140,30 @@ def test_nutrition_sums_from_empty() -> None:
     # The empty Nutrition() is the identity that makes sum() work.
     parts = [Nutrition(100, 10, 20, 5), Nutrition(200, 20, 40, 10)]
     assert sum(parts, Nutrition()).calories == 300
+
+
+# A round-numbered goal set so the remaining-budget arithmetic reads cleanly.
+GOALS = DailyGoals(
+    bmr=1800,
+    tdee=2500,
+    calories=2000,
+    macros=Macros(protein_g=150, carbs_g=200, fat_g=67),
+)
+
+
+def test_remaining_budget_subtracts_what_was_eaten() -> None:
+    left = remaining_budget(GOALS, Nutrition(500, 40, 60, 20))
+    # 2000−500, 150−40, 200−60, 67−20
+    assert left == Nutrition(1500, 110, 140, 47)
+
+
+def test_exercise_adds_calories_back_but_not_macros() -> None:
+    left = remaining_budget(GOALS, Nutrition(500, 40, 60, 20), burned=300)
+    # Net calories: 2000 − 500 + 300 = 1800. Macros are unchanged by the run.
+    assert left == Nutrition(1800, 110, 140, 47)
+
+
+def test_remaining_budget_goes_negative_when_over() -> None:
+    left = remaining_budget(GOALS, Nutrition(2300, 160, 180, 70))
+    # 2000−2300 = −300 kcal; 150−160 = −10 g protein. Not clamped here.
+    assert (left.calories, left.protein_g) == (-300, -10)
