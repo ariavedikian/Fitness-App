@@ -11,6 +11,7 @@ Two halves, like ``test_off_client``:
   where a hand-rolled fake client would silently accept it.
 """
 
+import base64
 import json
 import logging
 
@@ -23,13 +24,19 @@ from app.core.config import settings
 from app.models.log_entry import MealType
 from app.services import ai_client
 from app.services.ai_client import (
+    MAX_PHOTO_ITEMS,
+    PHOTO_PROMPT,
+    PHOTO_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     AiUnavailableError,
+    EstimatedItem,
     MealRequest,
     MealSuggestion,
     build_meal_prompt,
+    estimate_photo,
     is_enabled,
     recommend_meals,
+    sniff_image_type,
 )
 from app.services.nutrition import Nutrition
 
@@ -282,3 +289,121 @@ def test_out_of_range_estimate_is_rejected(ai_on: None) -> None:
     reply = _reply({**SUGGESTION, "calories": -50})
     with pytest.raises(AiUnavailableError, match="unusable reply"):
         recommend_meals(REQUEST, client=_sdk(_answer(reply)))
+
+
+# ---------------------------------------------------------------------------
+# Photo estimation: image sniffing (pure).
+# ---------------------------------------------------------------------------
+
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 32  # enough of a JPEG for the sniffer
+
+
+@pytest.mark.parametrize(
+    "data, expected",
+    [
+        (JPEG, "image/jpeg"),
+        (b"\x89PNG\r\n\x1a\n" + b"\x00" * 8, "image/png"),
+        (b"GIF87a...", "image/gif"),
+        (b"GIF89a...", "image/gif"),
+        (b"RIFF\x24\x00\x00\x00WEBPVP8 ", "image/webp"),
+        (b"RIFF\x24\x00\x00\x00WAVEfmt ", None),  # RIFF, but audio
+        (b"\x00\x00\x00\x18ftypheic", None),  # HEIC: Claude can't read it
+        (b"%PDF-1.7", None),
+        (b"", None),
+    ],
+)
+def test_sniffs_image_type_from_magic_bytes(
+    data: bytes, expected: str | None
+) -> None:
+    assert sniff_image_type(data) == expected
+
+
+# ---------------------------------------------------------------------------
+# Photo estimation: the SDK call.
+# ---------------------------------------------------------------------------
+
+RICE = {
+    "name": "Steamed white rice",
+    "grams": 180,
+    "calories_per_100g": 130,
+    "protein_per_100g": 2.7,
+    "carbs_per_100g": 28.2,
+    "fat_per_100g": 0.3,
+}
+
+
+def _photo_reply(*items: dict, confidence: str = "medium") -> dict:
+    estimate = {
+        "items": list(items),
+        "confidence": confidence,
+        "note": "Assumed no oil.",
+    }
+    return _message(json.dumps(estimate))
+
+
+def test_estimate_returns_validated_items(ai_on: None) -> None:
+    estimate = estimate_photo(
+        JPEG, "image/jpeg", client=_sdk(_answer(_photo_reply(RICE)))
+    )
+
+    assert estimate.items == [EstimatedItem(**RICE)]
+    assert (estimate.confidence, estimate.note) == ("medium", "Assumed no oil.")
+
+
+def test_estimate_sends_the_image_before_the_instruction(ai_on: None) -> None:
+    seen: list[httpx2.Request] = []
+    estimate_photo(
+        JPEG, "image/jpeg", client=_sdk(_answer(_photo_reply(RICE), seen=seen))
+    )
+
+    body = json.loads(seen[0].content)
+    assert body["system"] == PHOTO_SYSTEM_PROMPT
+    image, text = body["messages"][0]["content"]
+    assert image == {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/jpeg",
+            "data": base64.standard_b64encode(JPEG).decode("ascii"),
+        },
+    }
+    assert text == {"type": "text", "text": PHOTO_PROMPT}
+    schema = body["output_config"]["format"]["schema"]
+    assert set(schema["required"]) == {"items", "confidence", "note"}
+
+
+def test_a_photo_without_food_is_an_empty_estimate(ai_on: None) -> None:
+    reply = _message(
+        json.dumps({"items": [], "confidence": "high", "note": "No food visible."})
+    )
+
+    estimate = estimate_photo(JPEG, "image/jpeg", client=_sdk(_answer(reply)))
+
+    assert estimate.items == []
+    assert estimate.note == "No food visible."
+
+
+def test_estimate_caps_the_number_of_items(ai_on: None) -> None:
+    many = [{**RICE, "name": f"Item {i}"} for i in range(MAX_PHOTO_ITEMS + 3)]
+
+    estimate = estimate_photo(
+        JPEG, "image/jpeg", client=_sdk(_answer(_photo_reply(*many)))
+    )
+
+    assert len(estimate.items) == MAX_PHOTO_ITEMS
+
+
+def test_physically_impossible_nutrition_is_rejected(ai_on: None) -> None:
+    # Over 900 kcal per 100 g is more than pure fat: a broken estimate.
+    reply = _photo_reply({**RICE, "calories_per_100g": 950})
+    with pytest.raises(AiUnavailableError, match="unusable reply"):
+        estimate_photo(JPEG, "image/jpeg", client=_sdk(_answer(reply)))
+
+
+def test_estimate_is_unavailable_when_ai_is_off() -> None:
+    seen: list[httpx2.Request] = []
+    with pytest.raises(AiUnavailableError):
+        estimate_photo(
+            JPEG, "image/jpeg", client=_sdk(_answer(_photo_reply(RICE), seen=seen))
+        )
+    assert seen == []

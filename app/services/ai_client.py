@@ -1,31 +1,36 @@
-"""Claude integration: AI meal suggestions that fit the day's remaining budget.
+"""Claude integration: meal suggestions and photo calorie estimates.
 
 This module is the **adapter** that quarantines the Anthropic SDK, the way
 ``off_client`` quarantines Open Food Facts: nothing else in the app imports
-``anthropic``. Callers hand it a :class:`MealRequest` (plain numbers the
-server computed) and get back validated :class:`MealSuggestion` objects — or
-an :class:`AiUnavailableError`.
+``anthropic``. Two features use it:
 
-Two halves:
+* :func:`recommend_meals` — a :class:`MealRequest` (plain numbers the server
+  computed) in, validated :class:`MealSuggestion` objects out;
+* :func:`estimate_photo` — a validated image in, a :class:`PhotoEstimate`
+  (items with grams and per-100 g nutrition) out.
 
-* **pure** — :data:`SYSTEM_PROMPT`, :func:`build_meal_prompt` and the
-  Pydantic result schema. No network, so tests pin them down directly.
-* **the SDK call** — :func:`recommend_meals` uses ``client.messages.parse()``
-  with that schema: Claude's reply is constrained to matching JSON and
-  validated into Pydantic objects, so there is no hand-parsing.
+Each feature has a **pure** half (prompts, prompt builders, Pydantic result
+schemas — no network, tested directly) and goes through one shared SDK call,
+:func:`_call`, which uses ``client.messages.parse()`` with the schema: the
+reply is constrained to matching JSON and validated into Pydantic objects, so
+there is no hand-parsing.
 
 Every failure — feature off, no key, API error, refusal, a reply that fails
 validation — becomes :class:`AiUnavailableError`, so the caller can *degrade*
-("suggestions unavailable") instead of breaking the page.
+("unavailable") instead of breaking the page.
 
-Only server-computed numbers and an enum reach the prompt — never text the
-user typed — so there is no prompt-injection surface here.
+Meal prompts carry only server-computed numbers and an enum — never text the
+user typed. A photo *can* contain text (a sign, a label), but the output
+schema bounds what it could do: at worst odd items, which the user reviews
+before anything is logged.
 """
 
 from __future__ import annotations
 
+import base64
 import logging
 from dataclasses import dataclass
+from typing import Literal
 
 import anthropic
 import pydantic
@@ -168,7 +173,7 @@ def _api_key() -> str | None:
 
 
 def is_enabled() -> bool:
-    """Whether suggestions are switched on *and* have a key to call with.
+    """Whether AI features are switched on *and* have a key to call with.
 
     Lets a caller tell "not set up" apart from "temporarily failing", the way
     ``FoodSearchResponse.external`` distinguishes OFF's disabled/unavailable.
@@ -197,28 +202,33 @@ def _client(
     return made, True
 
 
-def recommend_meals(
-    request: MealRequest, *, client: anthropic.Anthropic | None = None
-) -> list[MealSuggestion]:
-    """Ask Claude for meal ideas that fit ``request``'s remaining budget.
+def _call[T: BaseModel](
+    client: anthropic.Anthropic | None,
+    *,
+    system: str,
+    content: str | list[dict],
+    output_format: type[T],
+) -> T:
+    """One structured Claude request, shared by every AI feature.
 
-    Returns at most ``request.count`` validated suggestions. Raises
-    :class:`AiUnavailableError` if the feature is off or unconfigured, or if
-    the call fails in any way.
+    Owns everything that isn't feature-specific: the on/off check, the
+    client's lifecycle, the model/effort/thinking settings, and turning every
+    failure into :class:`AiUnavailableError`. Returns the validated
+    ``output_format`` instance.
     """
     if not is_enabled():
-        raise AiUnavailableError("AI suggestions are switched off or have no key")
+        raise AiUnavailableError("AI features are switched off or have no key")
 
     cli, owns = _client(client)
     try:
         response = cli.messages.parse(
             model=settings.ai_model,
             max_tokens=_MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": build_meal_prompt(request)}],
+            system=system,
+            messages=[{"role": "user", "content": content}],
             thinking={"type": "adaptive"},
             output_config={"effort": settings.ai_effort},
-            output_format=MealRecommendations,
+            output_format=output_format,
         )
     except (
         anthropic.AuthenticationError,
@@ -259,6 +269,150 @@ def recommend_meals(
         raise AiUnavailableError(
             f"Claude did not finish (stop_reason={response.stop_reason})"
         )
+    return result
+
+
+def recommend_meals(
+    request: MealRequest, *, client: anthropic.Anthropic | None = None
+) -> list[MealSuggestion]:
+    """Ask Claude for meal ideas that fit ``request``'s remaining budget.
+
+    Returns at most ``request.count`` validated suggestions. Raises
+    :class:`AiUnavailableError` if the feature is off or unconfigured, or if
+    the call fails in any way.
+    """
+    result = _call(
+        client,
+        system=SYSTEM_PROMPT,
+        content=build_meal_prompt(request),
+        output_format=MealRecommendations,
+    )
     # The count is asked for in the prompt but can't be a schema rule (the API
     # doesn't enforce maximums), so trim extras rather than reject a good reply.
     return result.suggestions[: request.count]
+
+
+# ---------------------------------------------------------------------------
+# Photo calorie estimation.
+# ---------------------------------------------------------------------------
+
+# Comfortably under the API's per-image limit even counting base64's ~4/3
+# growth. The browser downscales to ~1568 px JPEG (a few hundred KB) first, so
+# only something bypassing the UI gets near this.
+MAX_IMAGE_BYTES = 3 * 1024 * 1024
+
+# A plate rarely holds more than a handful of distinct things; the cap stops
+# a cluttered photo from producing an unreviewable list.
+MAX_PHOTO_ITEMS = 10
+
+# The formats Claude accepts, identified by their leading "magic" bytes
+# rather than by the client's claimed content type or file extension.
+_IMAGE_SIGNATURES: tuple[tuple[bytes, str], ...] = (
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def sniff_image_type(data: bytes) -> str | None:
+    """The media type of ``data`` if it's an image format Claude accepts
+    (JPEG, PNG, GIF, WebP), judged by its magic bytes; otherwise ``None``.
+
+    A client's ``Content-Type`` is just a claim — this checks the bytes.
+    """
+    for signature, media_type in _IMAGE_SIGNATURES:
+        if data.startswith(signature):
+            return media_type
+    # WebP is a RIFF container: "RIFF", a 4-byte size, then "WEBP".
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+class EstimatedItem(BaseModel):
+    """One food or drink Claude sees in the photo.
+
+    Nutrition is *per 100 g* (the app's canonical form) plus an estimated
+    weight: the portion is the uncertain part of a photo estimate, so the
+    user corrects the grams and every figure rescales by one multiplication.
+    The bounds are physical — pure fat is 900 kcal/100 g, and no macro can
+    exceed 100 g per 100 g.
+    """
+
+    name: str = Field(description="What it is, e.g. 'Grilled chicken breast'.")
+    grams: int = Field(
+        ge=1, le=5000, description="Estimated weight of this item as served."
+    )
+    calories_per_100g: float = Field(
+        ge=0, le=900, description="Typical kcal per 100 g, as prepared."
+    )
+    protein_per_100g: float = Field(ge=0, le=100, description="Grams per 100 g.")
+    carbs_per_100g: float = Field(ge=0, le=100, description="Grams per 100 g.")
+    fat_per_100g: float = Field(ge=0, le=100, description="Grams per 100 g.")
+
+
+class PhotoEstimate(BaseModel):
+    """Claude's reading of a meal photo. ``items`` is empty when there's no
+    food in the photo; ``note`` then says so."""
+
+    items: list[EstimatedItem] = Field(
+        description="Each distinct food or drink visible; empty if none."
+    )
+    confidence: Literal["low", "medium", "high"] = Field(
+        description="How reliable the portion estimates are, given the photo."
+    )
+    note: str = Field(
+        description="One short sentence for the user: the main assumption "
+        "made (e.g. cooking oil, hidden fillings), or that no food is visible."
+    )
+
+
+PHOTO_SYSTEM_PROMPT = """\
+You estimate the nutrition of food in photos for FitTrack, a calorie and \
+macronutrient tracking app. The user will review and adjust your estimate \
+before logging it, so aim for realistic typical values rather than cautious \
+ones.
+
+List each distinct food or drink you can see. Keep items that are eaten \
+together and can't sensibly be separated as one item (a sandwich, a mixed \
+salad, a bowl of soup). For each, estimate its weight in grams as served and \
+its typical nutrition per 100 g as prepared, accounting for visible cooking \
+methods, sauces and oils. Use the plate, utensils and packaging for scale.
+
+If there is no food or drink in the photo, return no items and say so in the \
+note. Describe only the food: don't comment on the person, their health or \
+their diet, and don't give nutrition or medical advice."""
+
+PHOTO_PROMPT = "Estimate the food in this photo."
+
+
+def estimate_photo(
+    image: bytes, media_type: str, *, client: anthropic.Anthropic | None = None
+) -> PhotoEstimate:
+    """Ask Claude to identify the food in a photo and estimate its nutrition.
+
+    ``image`` must already be validated by the caller (a type from
+    :func:`sniff_image_type`, at most :data:`MAX_IMAGE_BYTES`). Returns the
+    estimate with at most :data:`MAX_PHOTO_ITEMS` items. Raises
+    :class:`AiUnavailableError` if the feature is off or the call fails.
+    """
+    estimate = _call(
+        client,
+        system=PHOTO_SYSTEM_PROMPT,
+        # The image goes before the instruction, the order Claude handles best.
+        content=[
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": base64.standard_b64encode(image).decode("ascii"),
+                },
+            },
+            {"type": "text", "text": PHOTO_PROMPT},
+        ],
+        output_format=PhotoEstimate,
+    )
+    estimate.items = estimate.items[:MAX_PHOTO_ITEMS]
+    return estimate
