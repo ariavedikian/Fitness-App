@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models import MealType, User
 from app.services import (
     ai_client,
+    ai_usage_service,
     log_service,
     nutrition,
     profile_service,
@@ -55,8 +56,9 @@ def suggest_meals(
     """Meal ideas that fit what's left of ``user``'s budget for ``today``.
 
     Raises :class:`ProfileRequiredError` without a profile, and lets
-    :class:`~app.services.ai_client.AiUnavailableError` propagate so the
-    route can degrade. ``today`` is injectable for deterministic tests.
+    :class:`~app.services.ai_usage_service.AiRateLimitError` and
+    :class:`~app.services.ai_client.AiUnavailableError` propagate for the
+    route to map. ``today`` is injectable for deterministic tests.
     """
     profile = profile_service.get_profile(db, user)
     if profile is None:
@@ -73,6 +75,12 @@ def suggest_meals(
     if remaining.calories < MIN_CALORIES_TO_SUGGEST:
         return MealSuggestions(status="budget_spent")
 
+    # Counted only now, after every check that answers without calling
+    # Claude, so a spent budget never uses up the allowance. Raises
+    # AiRateLimitError when the user is out of requests for the window.
+    ai_usage_service.check_and_record(
+        db, user, ai_usage_service.MEAL_SUGGESTIONS
+    )
     request = MealRequest(remaining=remaining, meal_type=meal_type)
     return MealSuggestions(
         status="ok", suggestions=ai_client.recommend_meals(request)

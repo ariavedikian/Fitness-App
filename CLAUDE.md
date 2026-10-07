@@ -92,14 +92,15 @@ fitness-app/
 │   │   ├── session.py       # engine, SessionLocal, get_db() dependency
 │   │   └── seed.py          # `python -m app.db.seed` — idempotent food + exercise seed
 │   ├── models/              # user, profile, food, log_entry, exercise,
-│   │                        #   workout_entry, weight_entry
+│   │                        #   workout_entry, weight_entry, ai_request
 │   ├── schemas/             # Pydantic shapes: user, profile, food, log, workout,
 │   │                        #   weight, analytics, recommendation
 │   ├── services/            # business logic: user, profile, food, log, nutrition,
 │   │                        #   off_client (OFF adapter), search (LIKE-escape),
 │   │                        #   exercise, workout (MET math), workout_service,
 │   │                        #   weight_service, analytics_service,
-│   │                        #   ai_client (Claude adapter), recommendation_service
+│   │                        #   ai_client (Claude adapter), recommendation_service,
+│   │                        #   ai_usage_service (per-user AI rate limit)
 │   ├── api/                 # routers: auth, profile, foods, log, exercises,
 │   │                        #   workouts, weight, analytics, recommendations,
 │   │                        #   pages, health, deps
@@ -221,7 +222,8 @@ fitness-app/
     surface. `POST` (not `GET`, which browsers/link previewers can prefetch);
     under `MIN_CALORIES_TO_SUGGEST` (100 kcal) left, the API answers
     `budget_spent` without calling Claude; the UI allows one request in
-    flight; timeout 60 s and 1 retry instead of the SDK's 10 min / 2.
+    flight; timeout 60 s and 1 retry instead of the SDK's 10 min / 2; and a
+    per-user cap on billed calls (#29).
 27. **Model output is untrusted, and framed as ideas, not advice** — names and
     descriptions are rendered with `textContent` only. The system prompt and
     an always-visible disclaimer frame suggestions as general meal ideas with
@@ -235,6 +237,24 @@ fitness-app/
     fake would accept a misspelled parameter silently). Service/API tests stub
     one level up, at `ai_client.recommend_meals`. Nothing hits the network and
     no key is needed.
+29. **AI calls are rate-limited per user, in the database** — `AI_DAILY_LIMIT`
+    (default 20) billed requests per user per **rolling** 24 hours, shared by
+    all AI features. Stored as one `AiRequest` row per call rather than in
+    process memory, which would reset on every restart (and every `--reload`)
+    and multiply with the worker count; Redis would be a new dependency for no
+    gain at this scale. Rolling rather than calendar-day: the server's
+    midnight isn't the user's, and a reset invites a burst either side of it.
+    `ai_usage_service.check_and_record` runs **after** every check that
+    answers without calling Claude (so `budget_spent` never spends the
+    allowance) and records **before** the call, so a failed call still counts
+    — it may have been billed, and the limit protects the bill. Over the
+    limit → `429` with `Retry-After` (exact seconds) and a message that rounds
+    the wait *up*; the UI shows it in the neutral tone. Rows older than the
+    window are pruned as it goes. `created_at` is written by the app, not a DB
+    default, so it shares the limiter's (injectable) clock; SQLite returns it
+    time-zone naive, so `_as_utc` treats naive as UTC. A burst of simultaneous
+    requests can overshoot by one — fine for a cost guard (an exact limit
+    would lock the user's row).
 
 ## Coding conventions
 
@@ -333,30 +353,31 @@ fitness-app/
     **macros** (protein/carbs/fat, three lines in a validated colourblind-safe
     palette) over a 7/30/90-day range. The dashboard Weight card gains a
     sparkline of recent weigh-ins.
-11. **AI meal recommendations** (first Claude feature; sub-steps 11a–11d) —
+11. **AI meal recommendations** (first Claude feature; sub-steps 11a–11e) —
     `ai_client.py` adapts the Anthropic SDK: `MealRequest` (remaining budget +
     meal type + count) → pure prompt builder → `messages.parse()` with a
     Pydantic `MealRecommendations` schema → validated `MealSuggestion`s, or
     `AiUnavailableError`. Settings: `AI_ENABLED` (default off),
     `ANTHROPIC_API_KEY`, `AI_MODEL` (`claude-opus-4-8`), `AI_EFFORT`
-    (`medium`, adaptive thinking), `AI_TIMEOUT_SECONDS`, `AI_MAX_RETRIES`.
+    (`medium`, adaptive thinking), `AI_TIMEOUT_SECONDS`, `AI_MAX_RETRIES`,
+    `AI_DAILY_LIMIT` (20).
     `recommendation_service.suggest_meals` computes today's remaining budget
     from goals + meals + workouts (`nutrition.remaining_budget`) and asks for
     3 ideas. `POST /api/recommendations/meals {meal_type}` → 200
-    `ok`/`budget_spent`; 503 when AI is off or failing; 409 without a profile.
+    `ok`/`budget_spent`; 503 when AI is off or failing; 409 without a profile;
+    429 + `Retry-After` once the user's daily allowance is used (11e: the
+    `ai_requests` table + `ai_usage_service`, decision #29).
     The dashboard shows a full-width **Meal ideas** card (only when AI is
     enabled): meal picker defaulted by time of day (shared `meals.js`), one
-    request in flight, loading/error/budget-spent states, and a not-advice
-    disclaimer.
+    request in flight, loading/error/budget-spent/limit states, and a
+    not-advice disclaimer.
 
 ## Planned milestones (next → later)
 
 - **NEXT — remaining AI features** — photo calorie estimation (Claude vision:
   base64 image → structured nutrition estimate, reusing the `ai_client`
-  pattern) and personalized workout recommendations.
-- **Before AI goes beyond a demo** — a per-user rate limit on the billed AI
-  endpoint(s) (the UI's one-in-flight guard stops double-clicks, not a user
-  deliberately spamming the API).
+  pattern; record it in `ai_requests` under its own feature name so it shares
+  the per-user allowance) and personalized workout recommendations.
 - **Later food-data enhancements** — USDA FoodData Central as a second source
   (better whole-food data; needs a free key), and barcode-scan lookup (the OFF
   `fetch_off_product` path already supports barcodes).
@@ -391,9 +412,10 @@ calls it through the module attribute, so the patch takes effect.
 
 ## Current state
 
-- **218 tests passing.** Eight migrations applied (users → profiles → foods →
-  log_entries → foods.off_id → exercises → workout_entries → weight_entries).
-  Milestones 10 and 11 added no schema — they read existing tables.
+- **233 tests passing.** Nine migrations applied (users → profiles → foods →
+  log_entries → foods.off_id → exercises → workout_entries → weight_entries →
+  ai_requests). Milestone 10 and 11a–d added no schema; 11e added
+  `ai_requests` (the rate-limit log).
 - **External calls in tests are disabled by default** via an autouse `_offline`
   fixture in `tests/conftest.py` (sets `settings.off_enabled` *and*
   `settings.ai_enabled` to `False`); tests that exercise the OFF path re-enable
@@ -431,6 +453,6 @@ calls it through the module attribute, so the patch takes effect.
 - **Browser-pane tip:** when the desktop app window is behind other windows,
   the preview pane can't draw, so screenshots and coordinate clicks time out;
   drive the page with DOM events and read state with `read_page`/JS instead.
-- Milestone 11's meal recommendations (11a–11d) are complete and committed.
-  **Resume at the remaining AI features** (photo calorie estimation, then
-  workout recommendations); the per-user rate limit is the open decision.
+- Milestone 11's meal recommendations (11a–11e, including the per-user rate
+  limit) are complete. **Resume at the remaining AI features** (photo calorie
+  estimation, then workout recommendations).

@@ -5,6 +5,7 @@ Importing every model here ensures they are registered on
 migrations would silently miss tables.
 """
 
+from app.models.ai_request import AiRequest
 from app.models.exercise import Exercise
 from app.models.food import Food
 from app.models.log_entry import LogEntry, MealType
@@ -14,6 +15,7 @@ from app.models.weight_entry import WeightEntry
 from app.models.workout_entry import WorkoutEntry
 
 __all__ = [
+    "AiRequest",
     "Exercise",
     "Food",
     "LogEntry",

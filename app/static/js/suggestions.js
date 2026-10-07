@@ -89,14 +89,15 @@ export function initSuggestions() {
         list.append(...result.suggestions.map(renderSuggestion));
       }
     } catch (error) {
-      // The API's 503/409 messages are written for people; anything else
-      // (e.g. the network dropping) gets a generic retry hint.
+      // The API's 503/409/429 messages are written for people; anything else
+      // (e.g. the network dropping) gets a generic retry hint. Hitting the
+      // usage limit isn't a failure, so it gets the neutral tone.
       setStatus(
         status,
         error instanceof ApiError
           ? error.detail
           : "Couldn't reach FitTrack. Check your connection and try again.",
-        "error",
+        error instanceof ApiError && error.status === 429 ? "warn" : "error",
       );
     } finally {
       list.removeAttribute("aria-busy");

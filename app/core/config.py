@@ -9,7 +9,7 @@ configurable value has exactly one home.
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import PositiveInt, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolves to the project root regardless of where the server is started
@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     # is waiting on; a timed-out attempt is also retried, so these multiply.
     ai_timeout_seconds: float = 60.0
     ai_max_retries: int = 1
+    # Billed AI requests each user may make per rolling 24 hours (all AI
+    # features share it). Generous for real use — a few meals plus re-rolls —
+    # while capping what one account can spend. Positive, so a typo fails at
+    # boot rather than silently blocking (or breaking) every request.
+    ai_daily_limit: PositiveInt = 20
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",

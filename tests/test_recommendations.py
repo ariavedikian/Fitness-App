@@ -10,10 +10,12 @@ from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import LogEntry, MealType, User, WorkoutEntry
+from app.api.recommendations import _describe_wait
+from app.core.config import settings
+from app.models import AiRequest, LogEntry, MealType, User, WorkoutEntry
 from app.services import ai_client
 from app.services.ai_client import AiUnavailableError, MealRequest, MealSuggestion
 from app.services.nutrition import Nutrition
@@ -252,3 +254,82 @@ def test_claude_failure_returns_503(
 
     assert response.status_code == 503
     assert "try again" in response.json()["detail"]
+
+
+# ------------------------------------------------------------ rate limiting
+def ai_requests_stored(db: Session) -> int:
+    return db.scalar(select(func.count()).select_from(AiRequest))
+
+
+def test_rate_limited_once_the_allowance_is_used(
+    client: TestClient,
+    ai_on: None,
+    claude: list[MealRequest],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ai_daily_limit", 2)
+    sign_in(client)
+    set_up_profile(client)
+
+    allowed = [client.post(URL, json={}).status_code for _ in range(2)]
+    blocked = client.post(URL, json={})
+
+    assert allowed == [200, 200]
+    assert blocked.status_code == 429
+    # Both requests were seconds ago, so the wait is just under 24 hours.
+    assert 23 * 3600 < int(blocked.headers["Retry-After"]) <= 24 * 3600
+    assert "Try again in about 24 hours" in blocked.json()["detail"]
+    assert len(claude) == 2  # the blocked request never reached Claude
+
+
+def test_a_spent_budget_does_not_use_the_allowance(
+    client: TestClient,
+    db: Session,
+    ai_on: None,
+    claude: list[MealRequest],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ai_daily_limit", 1)
+    sign_in(client)
+    goals = set_up_profile(client)
+    add_meal(db, grams=goals["calories"] + 300)
+
+    statuses = [client.post(URL, json={}).json()["status"] for _ in range(3)]
+
+    assert statuses == ["budget_spent"] * 3  # never a 429
+    assert ai_requests_stored(db) == 0
+
+
+def test_a_failed_call_still_counts(
+    client: TestClient,
+    db: Session,
+    ai_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A failed call may still have been billed, and the limit protects the bill.
+    sign_in(client)
+    set_up_profile(client)
+
+    def failing(request: MealRequest) -> list[MealSuggestion]:
+        raise AiUnavailableError("timed out")
+
+    monkeypatch.setattr(ai_client, "recommend_meals", failing)
+
+    assert client.post(URL, json={}).status_code == 503
+    assert ai_requests_stored(db) == 1
+
+
+@pytest.mark.parametrize(
+    "seconds, wording",
+    [
+        (1, "about a minute"),
+        (60, "about a minute"),
+        (61, "about 2 minutes"),
+        (3599, "about an hour"),  # rounds up: 59 min 59 s is not "59 minutes"
+        (3600, "about an hour"),
+        (3601, "about 2 hours"),
+        (86_400, "about 24 hours"),
+    ],
+)
+def test_wait_is_described_rounding_up(seconds: int, wording: str) -> None:
+    assert _describe_wait(seconds) == wording
