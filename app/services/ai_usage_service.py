@@ -35,6 +35,7 @@ WINDOW = timedelta(hours=24)
 # Feature names recorded with each request (plain strings; see AiRequest).
 MEAL_SUGGESTIONS = "meal_suggestions"
 PHOTO_ESTIMATE = "photo_estimate"
+WORKOUT_SUGGESTIONS = "workout_suggestions"
 
 
 class AiRateLimitError(Exception):

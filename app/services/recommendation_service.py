@@ -1,18 +1,24 @@
-"""Business logic for AI meal suggestions.
+"""Business logic for AI meal and workout suggestions.
 
-Gathers what the server knows — the profile's goals, today's meals and
-workouts — into the day's remaining budget, then asks ``ai_client`` for ideas
-that fit it. The server owns these numbers (it never trusts a budget sent by
-the client), and Claude only ever sees that summary, never the raw log.
+Gathers what the server knows and asks ``ai_client`` for ideas that fit it:
+
+* **meals** — the profile's goals and today's meals and workouts become the
+  day's remaining budget. The server owns these numbers (it never trusts a
+  budget sent by the client), and Claude only sees that summary.
+* **workouts** — the exercise catalogue, the last week's workouts and the
+  profile's goal and activity level. Claude may only pick catalogue
+  exercises, and each pick is resolved back to its catalogue row, so every
+  suggestion can be logged through the normal workout flow.
 """
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import MealType, User
+from app.models import Exercise, MealType, User, WorkoutEntry
 from app.services import (
     ai_client,
     ai_usage_service,
@@ -21,7 +27,14 @@ from app.services import (
     profile_service,
     workout_service,
 )
-from app.services.ai_client import MealRequest, MealSuggestion
+from app.services.ai_client import (
+    CatalogueExercise,
+    MealRequest,
+    MealSuggestion,
+    PastWorkout,
+    WorkoutRequest,
+)
+from app.services.workout import WorkoutFocus
 
 
 class ProfileRequiredError(Exception):
@@ -84,4 +97,141 @@ def suggest_meals(
     request = MealRequest(remaining=remaining, meal_type=meal_type)
     return MealSuggestions(
         status="ok", suggestions=ai_client.recommend_meals(request)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Workout suggestions.
+# ---------------------------------------------------------------------------
+
+# Rest is about the last day or two and balance about the last week; older
+# history would only lengthen the prompt.
+HISTORY_DAYS = 7
+
+# A very busy week shouldn't balloon the prompt: keep the most recent entries.
+MAX_HISTORY_ENTRIES = 40
+
+
+class CatalogueEmptyError(Exception):
+    """Raised when there are no exercises to suggest from (the catalogue
+    hasn't been seeded) — a server setup problem, not the user's."""
+
+
+@dataclass(frozen=True)
+class WorkoutIdeaExercise:
+    """One suggested exercise, resolved to its catalogue row so the browser
+    gets the id, name and type the workout log dialog needs."""
+
+    exercise: Exercise
+    sets: int | None
+    reps: int | None
+    minutes: int | None
+    note: str
+
+
+@dataclass(frozen=True)
+class WorkoutIdea:
+    """A suggested session for today, made only of catalogue exercises."""
+
+    title: str
+    summary: str
+    exercises: list[WorkoutIdeaExercise]
+
+
+def _recent_workouts(
+    db: Session, user: User, today: date
+) -> tuple[PastWorkout, ...]:
+    """The user's workouts from the last :data:`HISTORY_DAYS` days (today
+    included), at most :data:`MAX_HISTORY_ENTRIES` of the newest, oldest
+    first. Load and distance are dropped — see ``PastWorkout``."""
+    since = today - timedelta(days=HISTORY_DAYS - 1)
+    newest_first = db.scalars(
+        select(WorkoutEntry)
+        .where(
+            WorkoutEntry.user_id == user.id,
+            WorkoutEntry.date >= since,
+            # A client may log a future date; it isn't history yet.
+            WorkoutEntry.date <= today,
+        )
+        .order_by(
+            WorkoutEntry.date.desc(),
+            WorkoutEntry.created_at.desc(),
+            WorkoutEntry.id.desc(),
+        )
+        .limit(MAX_HISTORY_ENTRIES)
+    ).all()
+    return tuple(
+        PastWorkout(
+            days_ago=(today - entry.date).days,
+            name=entry.exercise_name,
+            type=entry.type,
+            muscle_group=entry.muscle_group,
+            sets=entry.sets,
+            reps=entry.reps,
+            minutes=entry.duration_minutes,
+        )
+        for entry in reversed(newest_first)
+    )
+
+
+def suggest_workout(
+    db: Session,
+    user: User,
+    minutes: int,
+    focus: WorkoutFocus,
+    today: date | None = None,
+) -> WorkoutIdea:
+    """A session for ``today`` built from the catalogue, balanced against the
+    user's recent workouts.
+
+    A profile is optional: without one, Claude simply isn't told a goal or
+    activity level. Raises :class:`CatalogueEmptyError` before anything is
+    counted, and lets
+    :class:`~app.services.ai_usage_service.AiRateLimitError` and
+    :class:`~app.services.ai_client.AiUnavailableError` propagate for the
+    route to map. ``today`` is injectable for deterministic tests.
+    """
+    # Sorted, so the schema built from it is byte-identical between requests
+    # and the API reuses its compiled grammar.
+    exercises = db.scalars(
+        select(Exercise).order_by(Exercise.name, Exercise.id)
+    ).all()
+    if not exercises:
+        raise CatalogueEmptyError
+
+    today = today or date.today()
+    profile = profile_service.get_profile(db, user)
+    request = WorkoutRequest(
+        minutes=minutes,
+        focus=focus,
+        catalogue=tuple(
+            CatalogueExercise(e.name, e.type, e.muscle_group) for e in exercises
+        ),
+        history=_recent_workouts(db, user, today),
+        goal=profile.goal if profile else None,
+        activity_level=profile.activity_level if profile else None,
+    )
+
+    # Counted only now, after every check that answers without calling
+    # Claude (as for meal ideas).
+    ai_usage_service.check_and_record(
+        db, user, ai_usage_service.WORKOUT_SUGGESTIONS
+    )
+    suggestion = ai_client.recommend_workout(request)
+
+    # The schema only allows catalogue names, so every name resolves.
+    by_name = {e.name: e for e in exercises}
+    return WorkoutIdea(
+        title=suggestion.title,
+        summary=suggestion.summary,
+        exercises=[
+            WorkoutIdeaExercise(
+                exercise=by_name[item.name],
+                sets=item.sets,
+                reps=item.reps,
+                minutes=item.minutes,
+                note=item.note,
+            )
+            for item in suggestion.exercises
+        ],
     )

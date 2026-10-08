@@ -1,10 +1,12 @@
-"""Pydantic schemas for AI meal suggestions."""
+"""Pydantic schemas for AI meal and workout suggestions."""
 
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from app.models.log_entry import MealType
+from app.schemas.workout import ExerciseRead
+from app.services.workout import WorkoutFocus
 
 
 class MealSuggestionsRequest(BaseModel):
@@ -45,3 +47,39 @@ class MealSuggestionsRead(BaseModel):
 
     status: Literal["ok", "budget_spent"]
     suggestions: list[MealSuggestionRead]
+
+
+class WorkoutIdeaRequest(BaseModel):
+    """Ask for one workout idea for today: how long, and what kind.
+
+    Both are fixed choices, so nothing free-form reaches the prompt and a
+    client can't ask for a three-hour session. The catalogue, history and
+    profile are the server's.
+    """
+
+    minutes: Literal[15, 30, 45, 60] = 30
+    focus: WorkoutFocus = WorkoutFocus.ANY
+
+
+class WorkoutIdeaExerciseRead(BaseModel):
+    """One suggested exercise. ``exercise`` is our catalogue row — the same
+    shape exercise search returns — so the browser can open the log dialog
+    with it directly. Strength sets ``sets``/``reps``, cardio ``minutes``."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    exercise: ExerciseRead
+    sets: int | None
+    reps: int | None
+    minutes: int | None
+    note: str
+
+
+class WorkoutIdeaRead(BaseModel):
+    """A suggested session: a title, why it fits, and the exercises in order."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    title: str
+    summary: str
+    exercises: list[WorkoutIdeaExerciseRead]
