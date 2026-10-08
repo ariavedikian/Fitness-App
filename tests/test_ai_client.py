@@ -1,4 +1,4 @@
-"""Tests for the Claude integration (AI meal suggestions).
+"""Tests for the Claude integration (meal ideas, photo estimates, workouts).
 
 Two halves, like ``test_off_client``:
 
@@ -25,20 +25,30 @@ from app.models.log_entry import MealType
 from app.services import ai_client
 from app.services.ai_client import (
     MAX_PHOTO_ITEMS,
+    MAX_WORKOUT_EXERCISES,
     PHOTO_PROMPT,
     PHOTO_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
+    WORKOUT_SYSTEM_PROMPT,
     AiUnavailableError,
+    CatalogueExercise,
     EstimatedItem,
     MealRequest,
     MealSuggestion,
+    PastWorkout,
+    SuggestedExercise,
+    WorkoutRequest,
     build_meal_prompt,
+    build_workout_prompt,
+    build_workout_schema,
     estimate_photo,
     is_enabled,
     recommend_meals,
+    recommend_workout,
     sniff_image_type,
 )
-from app.services.nutrition import Nutrition
+from app.services.nutrition import ActivityLevel, Goal, Nutrition
+from app.services.workout import ExerciseType, WorkoutFocus
 
 REQUEST = MealRequest(
     remaining=Nutrition(calories=850.4, protein_g=60.2, carbs_g=70.6, fat_g=25.0),
@@ -405,5 +415,195 @@ def test_estimate_is_unavailable_when_ai_is_off() -> None:
     with pytest.raises(AiUnavailableError):
         estimate_photo(
             JPEG, "image/jpeg", client=_sdk(_answer(_photo_reply(RICE), seen=seen))
+        )
+    assert seen == []
+
+
+# ---------------------------------------------------------------------------
+# Workout suggestions: the prompt and the catalogue-built schema (pure).
+# ---------------------------------------------------------------------------
+
+CARDIO, STRENGTH = ExerciseType.CARDIO, ExerciseType.STRENGTH
+
+CATALOGUE = (
+    CatalogueExercise("Running", CARDIO),
+    CatalogueExercise("Walking", CARDIO),
+    CatalogueExercise("Bench Press", STRENGTH, "Chest"),
+    CatalogueExercise("Squat", STRENGTH, "Legs"),
+    CatalogueExercise("Lunge", STRENGTH, "Legs"),
+)
+
+WORKOUT_REQUEST = WorkoutRequest(
+    minutes=30,
+    focus=WorkoutFocus.ANY,
+    catalogue=CATALOGUE,
+    history=(
+        PastWorkout(0, "Running", CARDIO, minutes=29.6),
+        PastWorkout(2, "Squat", STRENGTH, "Legs", sets=3, reps=8),
+        PastWorkout(2, "Lunge", STRENGTH, "Legs", sets=3, reps=10),
+    ),
+    goal=Goal.LOSE,
+    activity_level=ActivityLevel.VERY_ACTIVE,
+)
+
+
+def test_workout_prompt_lists_catalogue_history_and_request() -> None:
+    assert build_workout_prompt(WORKOUT_REQUEST) == (
+        "Exercises to choose from:\n"
+        "- Cardio: Running, Walking\n"
+        "- Strength (Chest): Bench Press\n"  # groups sorted by name
+        "- Strength (Legs): Squat, Lunge\n"
+        "\n"
+        "My recent workouts:\n"
+        "- Today: Running 30 min (cardio)\n"  # 29.6 rounds up
+        "- 2 days ago: Squat 3×8 (Legs); Lunge 3×10 (Legs)\n"
+        "\n"
+        "Goal: lose weight\n"
+        "Activity level: very active\n"  # the value, underscore spelled out
+        "Session length: 30 minutes\n"
+        "Focus: any (balance it against my recent workouts)\n"
+        "\n"
+        "Suggest one workout for today."
+    )
+
+
+def test_workout_prompt_without_a_profile_or_history() -> None:
+    prompt = build_workout_prompt(
+        WorkoutRequest(minutes=15, focus=WorkoutFocus.CARDIO, catalogue=CATALOGUE)
+    )
+    assert "My recent workouts:\n- None logged." in prompt
+    assert "Goal: not set\nActivity level: not set" in prompt
+    assert "Focus: cardio" in prompt
+
+
+def test_workout_schema_needs_a_catalogue() -> None:
+    with pytest.raises(ValueError, match="empty catalogue"):
+        build_workout_schema(())
+
+
+# ---------------------------------------------------------------------------
+# Workout suggestions: the SDK call.
+# ---------------------------------------------------------------------------
+
+WARM_UP = {"exercise": "Walking", "minutes": 5, "note": "Easy pace."}
+BENCH = {"exercise": "Bench Press", "sets": 3, "reps": 10, "note": ""}
+
+
+def _workout_reply(*exercises: dict) -> dict:
+    plan = {
+        "title": "Upper-body strength",
+        "summary": "Your legs worked two days ago, so this trains the chest.",
+        "exercises": list(exercises),
+    }
+    return _message(json.dumps(plan))
+
+
+def _sent_schema(catalogue: tuple[CatalogueExercise, ...], reply: dict) -> dict:
+    """The output schema the SDK actually sent for ``catalogue`` — what the
+    API's constrained decoding works from."""
+    seen: list[httpx2.Request] = []
+    request = WorkoutRequest(minutes=30, focus=WorkoutFocus.ANY, catalogue=catalogue)
+    recommend_workout(request, client=_sdk(_answer(reply, seen=seen)))
+    return json.loads(seen[0].content)["output_config"]["format"]["schema"]
+
+
+def _names_by_variant(schema: dict) -> dict[str, list[str]]:
+    return {
+        name: variant["properties"]["exercise"]["enum"]
+        for name, variant in schema["$defs"].items()
+    }
+
+
+def test_schema_allows_only_catalogue_names_by_type(ai_on: None) -> None:
+    schema = _sent_schema(CATALOGUE, _workout_reply(BENCH))
+
+    assert _names_by_variant(schema) == {
+        "StrengthExercise": ["Bench Press", "Squat", "Lunge"],
+        "CardioExercise": ["Running", "Walking"],
+    }
+    # Each type carries its own metrics, so a cardio item can't have sets.
+    required = {name: v["required"] for name, v in schema["$defs"].items()}
+    assert required == {
+        "StrengthExercise": ["exercise", "sets", "reps", "note"],
+        "CardioExercise": ["exercise", "minutes", "note"],
+    }
+
+
+def test_schema_sends_an_enum_even_for_a_single_name(ai_on: None) -> None:
+    # Pydantic emits a one-value Literal as `const`, which the SDK can't send
+    # (it would become a description hint): it must still arrive as an enum.
+    run = {"exercise": "Running", "minutes": 20, "note": ""}
+    schema = _sent_schema(
+        (CatalogueExercise("Running", CARDIO),), _workout_reply(run)
+    )
+    assert _names_by_variant(schema) == {"CardioExercise": ["Running"]}
+
+
+def test_returns_a_validated_workout(ai_on: None) -> None:
+    reply = _workout_reply(WARM_UP, BENCH)
+
+    workout = recommend_workout(WORKOUT_REQUEST, client=_sdk(_answer(reply)))
+
+    assert workout.title == "Upper-body strength"
+    assert workout.summary.startswith("Your legs worked")
+    # The type comes from our catalogue; the other type's metrics are None.
+    assert workout.exercises == (
+        SuggestedExercise("Walking", CARDIO, None, None, 5, "Easy pace."),
+        SuggestedExercise("Bench Press", STRENGTH, 3, 10, None, ""),
+    )
+
+
+def test_sends_the_workout_request(ai_on: None) -> None:
+    seen: list[httpx2.Request] = []
+    recommend_workout(
+        WORKOUT_REQUEST, client=_sdk(_answer(_workout_reply(BENCH), seen=seen))
+    )
+
+    body = json.loads(seen[0].content)
+    assert body["system"] == WORKOUT_SYSTEM_PROMPT
+    assert body["messages"] == [
+        {"role": "user", "content": build_workout_prompt(WORKOUT_REQUEST)}
+    ]
+    assert body["output_config"]["format"]["schema"]["required"] == [
+        "title",
+        "summary",
+        "exercises",
+    ]
+
+
+def test_trims_a_long_workout(ai_on: None) -> None:
+    reply = _workout_reply(*[BENCH] * (MAX_WORKOUT_EXERCISES + 2))
+
+    workout = recommend_workout(WORKOUT_REQUEST, client=_sdk(_answer(reply)))
+
+    assert len(workout.exercises) == MAX_WORKOUT_EXERCISES
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        # Not in the catalogue. The API's grammar can't produce this; the
+        # SDK's validation against the same schema is the second guard.
+        {"exercise": "Burpees", "sets": 3, "reps": 10, "note": ""},
+        # A cardio exercise given strength metrics matches neither variant.
+        {"exercise": "Running", "sets": 3, "reps": 10, "note": ""},
+        # Outside the physical bounds.
+        {**BENCH, "sets": 0},
+    ],
+    ids=["unknown-exercise", "wrong-metrics", "zero-sets"],
+)
+def test_an_invalid_exercise_makes_the_reply_unusable(
+    ai_on: None, item: dict
+) -> None:
+    reply = _workout_reply(WARM_UP, item)
+    with pytest.raises(AiUnavailableError, match="unusable reply"):
+        recommend_workout(WORKOUT_REQUEST, client=_sdk(_answer(reply)))
+
+
+def test_workout_is_unavailable_when_ai_is_off() -> None:
+    seen: list[httpx2.Request] = []
+    with pytest.raises(AiUnavailableError):
+        recommend_workout(
+            WORKOUT_REQUEST, client=_sdk(_answer(_workout_reply(BENCH), seen=seen))
         )
     assert seen == []

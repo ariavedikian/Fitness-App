@@ -26,6 +26,19 @@ class ExerciseType(str, Enum):
     CARDIO = "cardio"
 
 
+class WorkoutFocus(str, Enum):
+    """What kind of session someone wants a workout idea for.
+
+    ``ANY`` leaves the balance to their recent history; ``MIX`` asks for both
+    strength and cardio in one session.
+    """
+
+    ANY = "any"
+    STRENGTH = "strength"
+    CARDIO = "cardio"
+    MIX = "mix"
+
+
 def estimate_calories_burned(
     *, met: float, weight_kg: float, minutes: float
 ) -> float:

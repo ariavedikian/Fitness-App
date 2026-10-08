@@ -1,13 +1,17 @@
-"""Claude integration: meal suggestions and photo calorie estimates.
+"""Claude integration: meal suggestions, photo calorie estimates and workout
+suggestions.
 
 This module is the **adapter** that quarantines the Anthropic SDK, the way
 ``off_client`` quarantines Open Food Facts: nothing else in the app imports
-``anthropic``. Two features use it:
+``anthropic``. Three features use it:
 
 * :func:`recommend_meals` — a :class:`MealRequest` (plain numbers the server
   computed) in, validated :class:`MealSuggestion` objects out;
 * :func:`estimate_photo` — a validated image in, a :class:`PhotoEstimate`
-  (items with grams and per-100 g nutrition) out.
+  (items with grams and per-100 g nutrition) out;
+* :func:`recommend_workout` — a :class:`WorkoutRequest` (the catalogue, recent
+  history and the session wanted) in, a :class:`WorkoutSuggestion` made only
+  of catalogue exercises out.
 
 Each feature has a **pure** half (prompts, prompt builders, Pydantic result
 schemas — no network, tested directly) and goes through one shared SDK call,
@@ -19,10 +23,10 @@ Every failure — feature off, no key, API error, refusal, a reply that fails
 validation — becomes :class:`AiUnavailableError`, so the caller can *degrade*
 ("unavailable") instead of breaking the page.
 
-Meal prompts carry only server-computed numbers and an enum — never text the
-user typed. A photo *can* contain text (a sign, a label), but the output
-schema bounds what it could do: at worst odd items, which the user reviews
-before anything is logged.
+Meal and workout prompts carry only server-computed numbers, enums and
+catalogue names — never text the user typed. A photo *can* contain text (a
+sign, a label), but the output schema bounds what it could do: at worst odd
+items, which the user reviews before anything is logged.
 """
 
 from __future__ import annotations
@@ -30,15 +34,16 @@ from __future__ import annotations
 import base64
 import logging
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal, Union
 
 import anthropic
 import pydantic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, WithJsonSchema, create_model
 
 from app.core.config import settings
 from app.models.log_entry import MealType
-from app.services.nutrition import Nutrition
+from app.services.nutrition import ActivityLevel, Goal, Nutrition
+from app.services.workout import ExerciseType, WorkoutFocus
 
 logger = logging.getLogger(__name__)
 
@@ -416,3 +421,304 @@ def estimate_photo(
     )
     estimate.items = estimate.items[:MAX_PHOTO_ITEMS]
     return estimate
+
+
+# ---------------------------------------------------------------------------
+# Workout suggestions.
+# ---------------------------------------------------------------------------
+
+# Enough for an hour with a warm-up; the cap keeps the card readable if a
+# reply runs long.
+MAX_WORKOUT_EXERCISES = 8
+
+
+@dataclass(frozen=True)
+class CatalogueExercise:
+    """An exercise Claude may choose: one row of our catalogue."""
+
+    name: str
+    type: ExerciseType
+    muscle_group: str | None = None
+
+
+@dataclass(frozen=True)
+class PastWorkout:
+    """One logged exercise from the recent history, as the prompt shows it.
+
+    Load and distance are left out on purpose: suggestions don't prescribe
+    weights, so they'd be personal data Claude has no use for.
+    """
+
+    days_ago: int
+    name: str
+    type: ExerciseType
+    muscle_group: str | None = None
+    sets: int | None = None
+    reps: int | None = None
+    minutes: float | None = None
+
+
+@dataclass(frozen=True)
+class WorkoutRequest:
+    """What we ask for: one session for today.
+
+    Every field comes from the server — catalogue rows, history snapshotted
+    from catalogue rows, enums and numbers — so nothing the user typed reaches
+    the prompt. ``goal`` and ``activity_level`` are ``None`` without a profile.
+    """
+
+    minutes: int
+    focus: WorkoutFocus
+    catalogue: tuple[CatalogueExercise, ...]
+    history: tuple[PastWorkout, ...] = ()
+    goal: Goal | None = None
+    activity_level: ActivityLevel | None = None
+
+
+@dataclass(frozen=True)
+class SuggestedExercise:
+    """One exercise of a suggested session. ``name`` is always a catalogue
+    name; strength carries ``sets``/``reps``, cardio ``minutes``."""
+
+    name: str
+    type: ExerciseType
+    sets: int | None
+    reps: int | None
+    minutes: int | None
+    note: str
+
+
+@dataclass(frozen=True)
+class WorkoutSuggestion:
+    """A suggested session: a title, why it fits, and the exercises in order."""
+
+    title: str
+    summary: str
+    exercises: tuple[SuggestedExercise, ...]
+
+
+def _one_of(names: tuple[str, ...]) -> object:
+    """A field type that accepts exactly ``names``.
+
+    ``Literal`` does the validating. The explicit JSON schema makes the API
+    see an ``enum`` even for a single name: pydantic would emit that case as
+    ``const``, which the SDK can't send and turns into a mere hint.
+    """
+    return Annotated[
+        Literal[names], WithJsonSchema({"type": "string", "enum": list(names)})
+    ]
+
+
+def _note_field() -> object:
+    return Field(
+        description="One short tip, such as the pace or rest between sets; "
+        "empty if none."
+    )
+
+
+def build_workout_schema(
+    catalogue: tuple[CatalogueExercise, ...],
+) -> type[BaseModel]:
+    """The reply's schema, built from the catalogue.
+
+    Exercise names are an ``enum`` per type, so the API's constrained decoding
+    can only produce exercises we have, and each with the metrics its type
+    needs: a strength item has sets and reps, a cardio item minutes. That
+    keeps every suggestion loggable through the normal workout flow. The
+    schema is the same for as long as the catalogue is, so the API compiles
+    its grammar once and reuses it. Raises ``ValueError`` for an empty
+    catalogue — the caller checks before asking.
+    """
+    strength = tuple(e.name for e in catalogue if e.type == ExerciseType.STRENGTH)
+    cardio = tuple(e.name for e in catalogue if e.type == ExerciseType.CARDIO)
+
+    variants: list[type[BaseModel]] = []
+    if strength:
+        variants.append(
+            create_model(
+                "StrengthExercise",
+                exercise=(_one_of(strength), Field(description="From the list.")),
+                sets=(int, Field(ge=1, le=10)),
+                reps=(
+                    int,
+                    Field(
+                        ge=1,
+                        le=100,
+                        description="Per set; seconds held for a timed hold.",
+                    ),
+                ),
+                note=(str, _note_field()),
+            )
+        )
+    if cardio:
+        variants.append(
+            create_model(
+                "CardioExercise",
+                exercise=(_one_of(cardio), Field(description="From the list.")),
+                minutes=(int, Field(ge=1, le=120)),
+                note=(str, _note_field()),
+            )
+        )
+    if not variants:
+        raise ValueError("cannot suggest a workout from an empty catalogue")
+
+    return create_model(
+        "WorkoutPlan",
+        title=(
+            str,
+            Field(description="Short session name, e.g. 'Upper-body strength'."),
+        ),
+        summary=(
+            str,
+            Field(
+                description="One sentence: what the session works and how it "
+                "fits the recent workouts."
+            ),
+        ),
+        exercises=(
+            # Built at runtime, hence Union[...] rather than `|`; a union of
+            # one is just that model (a catalogue with only one type).
+            list[Union[tuple(variants)]],
+            Field(min_length=1, description="In the order to do them."),
+        ),
+    )
+
+
+WORKOUT_SYSTEM_PROMPT = """\
+You suggest workout ideas for FitTrack, a fitness tracking app. You'll be \
+given the exercises the app knows, the user's recent workouts, their goal and \
+activity level when they've set them, and how long and what kind of session \
+they want today.
+
+Suggest one session for today that fits in the time available, using only \
+exercises from the list. Balance it against the recent workouts: give muscle \
+groups trained in the last day or two a rest, and favour what has been \
+missed. With no recent workouts, or a sedentary or light activity level, keep \
+it approachable: fewer sets and easier options. Order the exercises the way \
+they'd be done, starting with an easy cardio warm-up when there's time.
+
+Give strength exercises as sets and reps, and cardio as minutes. For a timed \
+hold such as a plank, give the seconds held as reps and say so in the note. \
+Don't prescribe weights: people choose their own load.
+
+These are general fitness ideas, not training, medical or physiotherapy \
+advice: don't diagnose, promise results, make health claims, or comment on \
+the user's body."""
+
+_FOCUS_TEXT = {
+    WorkoutFocus.ANY: "any (balance it against my recent workouts)",
+    WorkoutFocus.STRENGTH: "strength",
+    WorkoutFocus.CARDIO: "cardio",
+    WorkoutFocus.MIX: "a mix of strength and cardio",
+}
+
+_GOAL_TEXT = {
+    Goal.LOSE: "lose weight",
+    Goal.MAINTAIN: "maintain weight",
+    Goal.GAIN: "gain weight",
+}
+
+
+def _day_label(days_ago: int) -> str:
+    if days_ago == 0:
+        return "Today"
+    if days_ago == 1:
+        return "Yesterday"
+    return f"{days_ago} days ago"
+
+
+def _describe_past(workout: PastWorkout) -> str:
+    """e.g. "Squat 3×8 (Legs)" or "Running 30 min (cardio)"."""
+    if workout.type == ExerciseType.CARDIO:
+        amount = f" {_whole(workout.minutes)} min" if workout.minutes else ""
+        return f"{workout.name}{amount} (cardio)"
+    amount = (
+        f" {workout.sets}×{workout.reps}"
+        if workout.sets is not None and workout.reps is not None
+        else ""
+    )
+    group = f" ({workout.muscle_group})" if workout.muscle_group else ""
+    return f"{workout.name}{amount}{group}"
+
+
+def build_workout_prompt(request: WorkoutRequest) -> str:
+    """The user turn: the catalogue, recent history, then today's request.
+
+    The catalogue is listed by type and muscle group (the schema already
+    holds the names, but not the groups Claude balances by), and the history
+    is grouped by day with relative labels — "yesterday" is what matters for
+    rest, not a date.
+    """
+    lines = ["Exercises to choose from:"]
+
+    cardio = [e.name for e in request.catalogue if e.type == ExerciseType.CARDIO]
+    if cardio:
+        lines.append(f"- Cardio: {', '.join(cardio)}")
+    by_group: dict[str, list[str]] = {}
+    for e in request.catalogue:
+        if e.type == ExerciseType.STRENGTH:
+            by_group.setdefault(e.muscle_group or "Other", []).append(e.name)
+    for group in sorted(by_group):
+        lines.append(f"- Strength ({group}): {', '.join(by_group[group])}")
+
+    lines += ["", "My recent workouts:"]
+    if request.history:
+        by_day: dict[int, list[str]] = {}
+        for workout in request.history:
+            by_day.setdefault(workout.days_ago, []).append(_describe_past(workout))
+        for days_ago in sorted(by_day):
+            lines.append(f"- {_day_label(days_ago)}: {'; '.join(by_day[days_ago])}")
+    else:
+        lines.append("- None logged.")
+
+    goal = _GOAL_TEXT[request.goal] if request.goal else "not set"
+    activity = (
+        request.activity_level.value.replace("_", " ")
+        if request.activity_level
+        else "not set"
+    )
+    lines += [
+        "",
+        f"Goal: {goal}",
+        f"Activity level: {activity}",
+        f"Session length: {request.minutes} minutes",
+        f"Focus: {_FOCUS_TEXT[request.focus]}",
+        "",
+        "Suggest one workout for today.",
+    ]
+    return "\n".join(lines)
+
+
+def recommend_workout(
+    request: WorkoutRequest, *, client: anthropic.Anthropic | None = None
+) -> WorkoutSuggestion:
+    """Ask Claude for one session built from ``request.catalogue``.
+
+    Returns at most :data:`MAX_WORKOUT_EXERCISES` exercises, each a catalogue
+    exercise with its type's metrics. Raises :class:`AiUnavailableError` if
+    the feature is off or the call fails, and ``ValueError`` for an empty
+    catalogue.
+    """
+    plan = _call(
+        client,
+        system=WORKOUT_SYSTEM_PROMPT,
+        content=build_workout_prompt(request),
+        output_format=build_workout_schema(request.catalogue),
+    )
+    types = {e.name: e.type for e in request.catalogue}
+    exercises = []
+    for item in plan.exercises[:MAX_WORKOUT_EXERCISES]:
+        fields = item.model_dump()
+        exercises.append(
+            SuggestedExercise(
+                name=fields["exercise"],
+                type=types[fields["exercise"]],
+                sets=fields.get("sets"),
+                reps=fields.get("reps"),
+                minutes=fields.get("minutes"),
+                note=fields["note"],
+            )
+        )
+    return WorkoutSuggestion(
+        title=plan.title, summary=plan.summary, exercises=tuple(exercises)
+    )
