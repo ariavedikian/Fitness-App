@@ -1044,6 +1044,14 @@ a {
   font-weight: 500;
 }
 
+/* A label and its select wrap as one unit, so a narrow screen never leaves a
+ * label at the end of one line and its select at the start of the next. */
+.suggest__field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* Stacked on a phone; auto-fit lays the ideas side by side once each can
  * keep a readable width. */
 .suggestion-list {
@@ -1093,6 +1101,47 @@ a {
   margin-top: var(--space-2);
   font-size: 0.8125rem;
   color: var(--color-text-muted);
+}
+
+/* ------------------------------------------------------ AI workout ideas */
+/* The card sits above the exercise search; its controls reuse .suggest__*. */
+.idea {
+  margin-bottom: var(--space-5);
+}
+
+.idea__title {
+  margin-top: var(--space-4);
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.idea__summary {
+  margin-top: var(--space-1);
+  font-size: 0.9375rem;
+}
+
+.idea-list {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Rows reuse .diary-entry; the note is Claude's tip for that exercise. */
+.idea-item__note {
+  margin-top: var(--space-1);
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.idea-item__done {
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-accent-dark);
+}
+
+.idea-item__log {
+  flex-shrink: 0;
 }
 
 /* ------------------------------------------------------- photo estimates */

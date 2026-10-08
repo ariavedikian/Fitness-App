@@ -102,7 +102,12 @@ def workouts_page(
 ) -> Response:
     if user is None:
         return RedirectResponse("/login", REDIRECT)
-    return templates.TemplateResponse(request, "workouts.html", {"user": user})
+    # Workout ideas render only when AI is on, like the other AI features.
+    return templates.TemplateResponse(
+        request,
+        "workouts.html",
+        {"user": user, "ai_enabled": ai_client.is_enabled()},
+    )
 
 
 @router.get("/progress", response_class=HTMLResponse)

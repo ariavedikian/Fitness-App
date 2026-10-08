@@ -8,6 +8,50 @@
     <p class="page-header__subtitle">Log an exercise and track calories burned.</p>
   </section>
 
+  {% if ai_enabled %}
+  {# AI workout ideas. Says what's shared with Claude before it's asked. #}
+  <section class="card idea" data-idea aria-labelledby="idea-heading">
+    <h2 id="idea-heading" class="card__title">Workout ideas</h2>
+    <form class="suggest__controls" data-idea-form>
+      <span class="suggest__field">
+        <label class="suggest__label" for="idea-minutes">Time</label>
+        <select id="idea-minutes" name="minutes" class="suggest__select">
+          <option value="15">15 min</option>
+          <option value="30" selected>30 min</option>
+          <option value="45">45 min</option>
+          <option value="60">60 min</option>
+        </select>
+      </span>
+      <span class="suggest__field">
+        <label class="suggest__label" for="idea-focus">Focus</label>
+        <select id="idea-focus" name="focus" class="suggest__select">
+          <option value="any" selected>Anything</option>
+          <option value="strength">Strength</option>
+          <option value="cardio">Cardio</option>
+          <option value="mix">A mix</option>
+        </select>
+      </span>
+      <button type="submit" class="button button--primary">
+        Suggest a workout
+      </button>
+    </form>
+    <p class="search-notice" data-idea-status role="status" aria-live="polite"
+       hidden></p>
+    <div data-idea-result hidden>
+      <h3 class="idea__title" data-idea-title></h3>
+      <p class="idea__summary" data-idea-summary></p>
+      {# Ordered: the exercises come in the order to do them. #}
+      <ol class="idea-list" data-idea-list></ol>
+    </div>
+    <p class="card__meta">
+      Claude (by Anthropic) picks from FitTrack's exercises, using your last
+      week of workouts and your goal. General fitness ideas, not training or
+      medical advice: go at your own pace and skip anything that doesn't feel
+      right.
+    </p>
+  </section>
+  {% endif %}
+
   <div class="search">
     <label class="search__label" for="exercise-search">Search exercises</label>
     <input
@@ -104,4 +148,12 @@
 
     initExerciseSearch();
   </script>
+  {% if ai_enabled %}
+  {# A second module script runs after the first, so the dialog is set up
+     before any idea can open it (both import the same module instance). #}
+  <script type="module">
+    import { initWorkoutIdeas } from "/static/js/workout-ideas.js";
+    initWorkoutIdeas();
+  </script>
+  {% endif %}
 {% endblock %}

@@ -88,6 +88,30 @@ def test_foods_page_hides_photo_estimates_when_ai_is_off(
     assert "photo-estimate.js" not in html
 
 
+def test_workouts_page_offers_workout_ideas_when_ai_is_on(
+    client: TestClient, ai_on: None
+) -> None:
+    sign_in(client)
+
+    html = client.get("/workouts").text
+
+    assert "data-idea" in html
+    assert "/static/js/workout-ideas.js" in html
+
+
+def test_workouts_page_hides_workout_ideas_when_ai_is_off(
+    client: TestClient,
+) -> None:
+    sign_in(client)
+
+    html = client.get("/workouts").text
+
+    assert "data-idea" not in html
+    assert "workout-ideas.js" not in html
+    # The rest of the page is unaffected.
+    assert 'id="exercise-search"' in html
+
+
 def test_dashboard_hides_meal_ideas_when_ai_is_off(client: TestClient) -> None:
     # No dead button, and the script isn't even loaded.
     sign_in(client)

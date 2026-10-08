@@ -4,6 +4,9 @@
  * field group shows — strength (sets/reps/weight) or cardio (duration/distance/
  * calories) — depends on the exercise's type. Only the visible group's key
  * fields are marked required, since a hidden required input would block submit.
+ *
+ * A workout idea opens it pre-filled with the suggested numbers, which the
+ * user adjusts to what they actually did — nothing is logged unreviewed.
  */
 
 import { ApiError, apiFetch } from "./api.js";
@@ -13,6 +16,7 @@ let form;
 let strengthFields;
 let cardioFields;
 let currentExercise;
+let currentOnLogged;
 let onLoggedCallback;
 
 /** A positive number from a field, or undefined when blank/zero. */
@@ -41,16 +45,29 @@ function buildPayload() {
   return payload;
 }
 
-export function openWorkoutDialog(exercise) {
+/** Open the dialog for `exercise`.
+ *
+ * `prefill` maps field names to starting values (e.g. a workout idea's
+ * `{ sets, reps }` or `{ duration_minutes }`); null values are skipped.
+ * `onLogged` runs after the page-wide callback, and only if this exercise is
+ * actually logged — cancelling never calls it. */
+export function openWorkoutDialog(exercise, { prefill = {}, onLogged } = {}) {
   currentExercise = exercise;
+  currentOnLogged = onLogged;
   form.reset();
   dialog.querySelector("[data-error]").hidden = true;
   dialog.querySelector("[data-exercise-name]").textContent = exercise.name;
 
   const isStrength = exercise.type === "strength";
-  dialog.querySelector("[data-type-hint]").textContent = isStrength
-    ? "Strength — enter your sets and reps."
-    : "Cardio — enter how long you went for.";
+  const prefilled = Object.entries(prefill).filter(([, value]) => value != null);
+  for (const [name, value] of prefilled) form.elements[name].value = value;
+
+  dialog.querySelector("[data-type-hint]").textContent =
+    prefilled.length > 0
+      ? "Filled in from your workout idea — change it to what you actually did."
+      : isStrength
+        ? "Strength — enter your sets and reps."
+        : "Cardio — enter how long you went for.";
 
   strengthFields.hidden = !isStrength;
   cardioFields.hidden = isStrength;
@@ -88,6 +105,7 @@ export function initWorkoutDialog({ onLogged } = {}) {
       });
       dialog.close();
       onLoggedCallback?.(entry);
+      currentOnLogged?.(entry);
     } catch (error) {
       if (!(error instanceof ApiError)) throw error;
       const box = dialog.querySelector("[data-error]");
