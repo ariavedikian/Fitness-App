@@ -1,4 +1,5 @@
-/** Status-line helper shared by the AI features (meal ideas, photo estimates).
+/** Status-line helper shared by the AI features (meal ideas, photo estimates,
+ *  workout ideas).
  *  Reuses the search page's notice styles: "warn" is the neutral tone,
  *  "error" the danger tone. */
 

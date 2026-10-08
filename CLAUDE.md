@@ -47,8 +47,9 @@ fix is tracked as a follow-up; see *Current state*.)
 - **AI:** the official Anthropic Python SDK (`anthropic` 1.x — built on `httpx2`,
   a separate package that coexists with `httpx`), sync client, model
   `claude-opus-4-8` by default (`AI_MODEL`), structured output via
-  `client.messages.parse()` (text prompts and vision). Load the `claude-api`
-  skill before touching it.
+  `client.messages.parse()` (text prompts and vision; workout ideas build
+  their schema per request from the exercise catalogue). Load the
+  `claude-api` skill before touching it.
 - **Uploads:** python-multipart (FastAPI's `File`/`UploadFile` need it) for
   meal photos.
 - Always work inside the **virtualenv** at `venv/`.
@@ -102,8 +103,9 @@ fitness-app/
 │   │                        #   off_client (OFF adapter), search (LIKE-escape),
 │   │                        #   exercise, workout (MET math), workout_service,
 │   │                        #   weight_service, analytics_service,
-│   │                        #   ai_client (Claude adapter: meal ideas + photo
-│   │                        #   estimates), recommendation_service,
+│   │                        #   ai_client (Claude adapter: meal ideas, photo
+│   │                        #   estimates, workout ideas),
+│   │                        #   recommendation_service (meal + workout ideas),
 │   │                        #   photo_estimate_service, ai_usage_service
 │   │                        #   (per-user AI rate limit)
 │   ├── api/                 # routers: auth, profile, foods, log, exercises,
@@ -113,10 +115,11 @@ fitness-app/
 │   │                        # frontend: chart.js (shared SVG line chart +
 │   │                        #   sparkline); progress.js/analytics.js draw trends;
 │   │                        #   suggestions.js (meal ideas); photo-estimate.js
-│   │                        #   (photo → review → log); meals.js (shared
-│   │                        #   time-of-day meal default); notice.js (shared
-│   │                        #   status lines for the AI features); nav.js
-│   │                        #   (the phone menu's open/close)
+│   │                        #   (photo → review → log); workout-ideas.js
+│   │                        #   (AI session → pre-filled workout dialog);
+│   │                        #   meals.js (shared time-of-day meal default);
+│   │                        #   notice.js (shared status lines for the AI
+│   │                        #   features); nav.js (the phone menu's open/close)
 │   ├── static/{css,js}/     # main.css (design tokens); ES modules per feature
 │   └── templates/           # base + page templates (Jinja2)
 ├── alembic/                 # migrations (env.py reads DATABASE_URL from settings)
@@ -244,7 +247,8 @@ fitness-app/
     real `anthropic.Anthropic` client backed by `httpx2.MockTransport`, so the
     SDK's own request building and `parse()` validation run (a hand-rolled
     fake would accept a misspelled parameter silently). Service/API tests stub
-    one level up, at `ai_client.recommend_meals` / `ai_client.estimate_photo`.
+    one level up, at `ai_client.recommend_meals` / `estimate_photo` /
+    `recommend_workout`.
     Nothing hits the network and no key is needed. Every feature goes through
     one private `_call()` (on/off check, model/effort/thinking, error
     mapping), so a new AI feature adds only its prompt and schema.
@@ -311,6 +315,49 @@ fitness-app/
     to the button, a tap outside closes, ≥44 px rows. The links come from one
     list in `base.html`, which also marks the current page with
     `aria-current="page"` (underlined in the accent).
+33. **Workout ideas use only catalogue exercises, enforced by the output
+    schema** — `build_workout_schema` creates the reply's Pydantic model per
+    request (`create_model`) from the catalogue: a `StrengthExercise
+    {exercise, sets, reps, note} | CardioExercise {exercise, minutes, note}`
+    union whose `exercise` fields are an `enum` of that type's names. The
+    API's constrained decoding can then only produce exercises we have, each
+    with its type's metrics (#18 by construction), and `parse()` re-validates
+    against the same model. Chosen over "ids in the prompt, filter
+    afterwards": a mixed-up id is a valid-but-wrong exercise nobody could
+    detect, whereas names carry meaning. **Gotcha (verified in SDK source):**
+    pydantic emits a one-value `Literal` as JSON-schema `const`, which the
+    SDK's `transform_schema` can't send — it turns it into a description
+    hint, silently dropping the guarantee — so `_one_of()` pins the schema
+    with `Annotated[Literal[names], WithJsonSchema({"type": "string",
+    "enum": [...]})]`. The catalogue is passed **sorted by name**, so the
+    schema is byte-identical between requests and the API reuses its
+    compiled grammar (it changes only when the catalogue does; at hundreds
+    of exercises, pre-filter by focus). The service resolves each name back
+    to its `Exercise` row, so the browser gets our id/name/type/MET (the same
+    `ExerciseRead` search returns); Claude's only text on the page is the
+    title, summary and per-exercise notes (`textContent`). Claude never
+    estimates calories or prescribes loads: logging runs the normal MET
+    estimate (#18), and weight stays the user's to enter.
+34. **Workout ideas: fixed choices in, a week of history, reviewed before
+    logging** — the user picks a length (15/30/45/60 min, a `Literal` in the
+    API schema) and a focus (`WorkoutFocus`: any/strength/cardio/mix); no
+    free text, so — like meal ideas (#26) — only server data reaches the
+    prompt: catalogue names, the history (snapshotted catalogue names, #9),
+    numbers and enums. History is the last 7 days including today (future
+    dates excluded), newest 40 entries, as relative days ("Yesterday: Squat
+    3×8 (Legs)") because rest is about recency; load and distance are left
+    out (personal data Claude has no use for). From the profile only `goal`
+    and `activity_level` are sent — not age, sex or weight — and no profile
+    is needed (so no 409; the prompt says "not set"). Checks run cheapest
+    first: an empty catalogue answers 503 *before* `check_and_record`, so an
+    unseeded server never spends anyone's allowance (#29). Each suggested
+    exercise has a **Log** button that opens the existing workout dialog
+    pre-filled (`openWorkoutDialog(exercise, { prefill, onLogged })`) for the
+    user to change to what they actually did — the review-before-log rule of
+    #30; "log the whole session" was rejected because it records the plan,
+    not the workout. `onLogged` is per opening, so a cancel never marks an
+    idea as logged. Ideas aren't persisted (a reload loses them, as with
+    meal ideas).
 
 ## Coding conventions
 
@@ -351,7 +398,7 @@ fitness-app/
 - Goals depend on today's date (age), so tests that need them read
   `/api/profile/goals` rather than hard-coding numbers that rot on a birthday.
 
-## Completed features (milestones 1–13)
+## Completed features (milestones 1–14)
 
 1. **Foundation** — venv, config system, `/health`, pytest, git.
 2. **DB + auth** — `User` model; register / login / logout / `me`; bcrypt; sessions.
@@ -450,12 +497,34 @@ fitness-app/
     button (`nav.js`) into a full-width list with the account row at the
     bottom; from 48rem they're inline; from 64rem the email shows too. The
     current page is marked with `aria-current` (decision #32).
+14. **Personalized workout recommendations** (third Claude feature; 14a–14d)
+    — `ai_client.recommend_workout(WorkoutRequest)` asks for one session for
+    today and returns a `WorkoutSuggestion` (title, one-line why, up to 8
+    `SuggestedExercise`s: a catalogue name plus sets/reps or minutes and a
+    short note). The reply schema is built from the catalogue so only real
+    exercises with their type's metrics can come back (decision #33).
+    `recommendation_service.suggest_workout` sends the sorted catalogue, the
+    last 7 days of workouts and the profile's goal/activity level (decision
+    #34), records the call as `workout_suggestions` against the shared
+    allowance, and resolves each name to its `Exercise` row. `POST
+    /api/recommendations/workouts {minutes: 15|30|45|60, focus}` → 200
+    `WorkoutIdeaRead`; 503 when AI is off, the catalogue is empty or Claude
+    fails; 429 over the allowance; no profile needed. The Workouts page gains
+    a **Workout ideas** card (only when AI is enabled): Time and Focus
+    selects, one request in flight, the title/summary/ordered exercises, a
+    not-advice disclaimer, and a **Log** button per exercise that opens the
+    workout dialog pre-filled (weight left blank) and marks the row "Logged".
 
 ## Planned milestones (next → later)
 
-- **NEXT — personalized workout recommendations**, the last planned AI
-  feature: same `ai_client._call` + schema pattern, recorded in
-  `ai_requests` under its own feature name so it shares the allowance.
+All planned AI features are built. Open items, in no fixed order:
+
+- **A deliberate live Claude test** of meal ideas, photo estimates and
+  workout ideas (needs `ANTHROPIC_API_KEY` + `AI_ENABLED=true` in `.env`;
+  a few cents) — see *Current state*.
+- **Re-check the nav's reset-on-widen** with the Browser pane visible
+  (decision #32 — it couldn't be observed while the pane was hidden).
+- **Cache-busting for static assets** (the stale-asset gotcha above).
 - **Later food-data enhancements** — USDA FoodData Central as a second source
   (better whole-food data; needs a free key), and barcode-scan lookup (the OFF
   `fetch_off_product` path already supports barcodes).
@@ -477,41 +546,51 @@ alembic revision --autogenerate -m "describe change"   # then READ the file
 alembic upgrade head
 ```
 
-Turn on the AI features — meal ideas and photo estimates (optional — **every
-suggestion or estimate is a billed API call**): add `AI_ENABLED=true` and
-`ANTHROPIC_API_KEY=sk-ant-...` to `.env` (see `.env.example` for the tuning
-settings), then restart the server. With either missing, the dashboard shows
-no Meal ideas card and the Foods page no photo button.
+Turn on the AI features — meal ideas, photo estimates and workout ideas
+(optional — **every suggestion or estimate is a billed API call**): add
+`AI_ENABLED=true` and `ANTHROPIC_API_KEY=sk-ant-...` to `.env` (see
+`.env.example` for the tuning settings), then restart the server. With either
+missing, the dashboard shows no Meal ideas card, the Foods page no photo
+button and the Workouts page no Workout ideas card.
 
 To work on the AI UIs **without a key or cost**, run the app from a throwaway
 script that sets `settings.ai_enabled = True`, a fake `anthropic_api_key`, and
-replaces `ai_client.recommend_meals` / `ai_client.estimate_photo` with
-functions returning canned `MealSuggestion`s / a `PhotoEstimate` (add a
-`time.sleep` to see the loading state; flag files are a handy way to switch a
-fake into "no food" or "Claude is down" without a restart). The services call
-them through the module attribute, so the patch takes effect. To feed the
-photo UI without a file picker, build a `File` from a canvas and assign it to
-the input with a `DataTransfer`, then dispatch `change`.
+replaces `ai_client.recommend_meals` / `estimate_photo` / `recommend_workout`
+with functions returning canned `MealSuggestion`s / a `PhotoEstimate` / a
+`WorkoutSuggestion` (for workouts, use names from `request.catalogue`, and
+`print(build_workout_prompt(request))` to see the exact prompt the real
+service built). Add a `time.sleep` to see the loading state; flag files are a
+handy way to switch a fake into "no food" or "Claude is down" — or, by
+wrapping `ai_usage_service.check_and_record` to set `settings.ai_daily_limit
+= 1`, into the 429 state — without a restart. The services call them through
+the module attribute, so the patch takes effect. To open it in the browser
+preview, add a temporary `.claude/launch.json` entry that runs the script
+with the venv's python on another port (e.g. 8001), and remove it afterwards.
+To feed the photo UI without a file picker, build a `File` from a canvas and
+assign it to the input with a `DataTransfer`, then dispatch `change`.
 
 ## Current state
 
-- **276 tests passing.** Nine migrations applied (users → profiles → foods →
+- **309 tests passing.** Nine migrations applied (users → profiles → foods →
   log_entries → foods.off_id → exercises → workout_entries → weight_entries →
-  ai_requests). Of Milestones 10–12 only 11e changed the schema (it added
-  `ai_requests`, the rate-limit log); photo estimates reuse `log_entries`.
+  ai_requests). Of Milestones 10–14 only 11e changed the schema (it added
+  `ai_requests`, the rate-limit log); photo estimates reuse `log_entries`,
+  and workout ideas read the existing catalogue and workout log.
 - **External calls in tests are disabled by default** via an autouse `_offline`
   fixture in `tests/conftest.py` (sets `settings.off_enabled` *and*
   `settings.ai_enabled` to `False`); tests that exercise the OFF path re-enable
   it and stub `off_client`, and AI tests use the `ai_on` fixture plus a
   mock-transport SDK client or a stubbed `ai_client.recommend_meals` /
-  `estimate_photo` — nothing hits the network. OFF search uses a **sync** `httpx.Client` (chosen over the
-  originally planned async, for consistency with the sync route/DB stack).
-- **Both AI features have only been exercised against stubs** (every UI state
-  browser-verified with faked `recommend_meals` / `estimate_photo`). No live
-  Claude call has been made yet, so real latency, output quality (including
-  how well portions are judged from a photo) and the `AI_EFFORT=medium`
-  default are untuned — do a deliberate live test (a few cents) before
-  relying on them. `claude-opus-5-5` is newer and cheaper than the default `opus-4-8`
+  `estimate_photo` / `recommend_workout` — nothing hits the network. OFF
+  search uses a **sync** `httpx.Client` (chosen over the originally planned
+  async, for consistency with the sync route/DB stack).
+- **All three AI features have only been exercised against stubs** (every
+  UI state browser-verified with faked `recommend_meals` / `estimate_photo` /
+  `recommend_workout`). No live Claude call has been made yet, so real
+  latency, output quality (how well portions are judged from a photo; how
+  sensibly a session is balanced against recent workouts) and the
+  `AI_EFFORT=medium` default are untuned — do a deliberate live test (a few
+  cents) before relying on them. `claude-opus-5-5` is newer and cheaper than the default `opus-4-8`
   ($4/$20 vs $5/$25 per MTok) and accepts the same request; switching is
   `AI_MODEL` in `.env` (the `claude-api` skill then recommends adding its
   refusal `fallbacks`).
@@ -521,6 +600,9 @@ the input with a `DataTransfer`, then dispatch `change`.
     imported during M7 testing (`off_id` set — exercises dedupe), 6 weigh-ins
     (Jul 6–20) and ~7 days of meals (Jul 15–21) seeded during M9/M10 testing, so
     the trend charts have real data to draw. Profile weight synced to ~179 lb.
+    M14 testing logged six workouts (Oct 5 and Oct 7, 2026: Running, Squat,
+    Lunge, Bench Press, Walking, Plank) and left four `workout_suggestions`
+    rows in `ai_requests` (they age out of the 24-hour window on their own).
   - `newbie@example.com` / `another-good-password` — no profile (exercises empty
     states).
 - A dev-server launch config lives at the **workspace-root** `.claude/launch.json`
@@ -543,5 +625,7 @@ the input with a `DataTransfer`, then dispatch `change`.
   be shown before testing anything render-driven. (Viewport *emulation*
   doesn't fire `matchMedia` `change` either; resizing an iframe does.)
 - Milestones 11 (meal recommendations + per-user rate limit, 11a–11e), 12
-  (photo calorie estimation, 12a–12d) and 13 (responsive nav) are complete.
-  **Resume at workout recommendations.**
+  (photo calorie estimation, 12a–12d), 13 (responsive nav) and 14 (workout
+  recommendations, 14a–14d) are complete. **Every planned AI feature is
+  built; next is the owner's pick from the open items under *Planned
+  milestones*.**
