@@ -18,6 +18,11 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 
 DEFAULT_SECRET_KEY = "dev-only-insecure-secret"
 
+# A real key is random and long (``secrets.token_hex(32)`` gives 64
+# characters). Anything shorter outside debug is a placeholder, an empty
+# ``SECRET_KEY=`` line or a typed-in password — all guessable.
+MIN_SECRET_KEY_LENGTH = 32
+
 
 class Settings(BaseSettings):
     app_name: str = "FitTrack"
@@ -28,8 +33,8 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{(BASE_DIR / 'fittrack.db').as_posix()}"
 
     # Signs session cookies. Anyone who knows this value can forge a login
-    # for any account, so the development default is rejected outside debug
-    # mode by the validator below.
+    # for any account, so the development default — or any short value — is
+    # rejected outside debug mode by the validator below.
     secret_key: str = DEFAULT_SECRET_KEY
 
     # How long a login lasts before the user must sign in again.
@@ -58,7 +63,7 @@ class Settings(BaseSettings):
     # service in earnest; kept generic here so nothing personal is committed.
     off_user_agent: str = "FitTrack/0.1 (mentoring project)"
 
-    # --- Claude (AI meal suggestions) ---
+    # --- Claude (AI meal ideas, photo estimates, workout ideas) ---
     # Off by default: unlike OFF, every request is billed to an Anthropic
     # account, so the feature is opt-in. The flag doubles as a kill switch —
     # switch it off (e.g. during a cost spike) without removing the key.
@@ -85,10 +90,14 @@ class Settings(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def reject_default_secret_outside_debug(self) -> "Settings":
-        if not self.debug and self.secret_key == DEFAULT_SECRET_KEY:
+    def reject_weak_secret_outside_debug(self) -> "Settings":
+        if not self.debug and (
+            self.secret_key == DEFAULT_SECRET_KEY
+            or len(self.secret_key) < MIN_SECRET_KEY_LENGTH
+        ):
             raise ValueError(
-                "SECRET_KEY must be set to a random value when DEBUG is false. "
+                "SECRET_KEY must be a random value of at least "
+                f"{MIN_SECRET_KEY_LENGTH} characters when DEBUG is false. "
                 "Generate one with: "
                 'python -c "import secrets; print(secrets.token_hex(32))"'
             )

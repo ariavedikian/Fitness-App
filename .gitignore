@@ -20,3 +20,6 @@ htmlcov/
 # Editors
 .vscode/
 .idea/
+
+# Personal Claude Code settings (shared ones would be .claude/settings.json)
+.claude/settings.local.json
