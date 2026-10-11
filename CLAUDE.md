@@ -21,11 +21,12 @@ engineer and mentor, not a code generator:
   milestone end); commit only once the owner confirms.
 - Keep code production-quality — this is a portfolio piece.
 
-**Browser-verification gotcha:** static JS/CSS have no cache headers, so the
-browser often runs a **stale cached** copy after you edit a file. Force a
-cache-bypassing reload (or `import('/static/js/x.js?v=' + Date.now())` to test
-the fresh module) — don't debug a "bug" that's really a stale asset. (Proper
-fix is tracked as a follow-up; see *Current state*.)
+**Browser-verification note:** static files are served with
+`Cache-Control: no-cache` (decision #35), so a normal navigation picks up an
+edited JS/CSS file. One exception: a copy a browser cached *before* that fix
+(M15) has no such header and can stay stale until a hard reload — if a change
+seemingly doesn't apply, check the server log for the file's 200/304 before
+debugging it.
 
 ## Tech stack
 
@@ -75,7 +76,8 @@ SQLite  →  (later) PostgreSQL
 - **schemas/** (Pydantic) are the boundary contract: what callers may send in and
   what we send back. Response schemas are an allowlist, so sensitive columns
   (e.g. `hashed_password`) can't leak.
-- **core/** holds cross-cutting concerns: `config`, `security`, `templates`.
+- **core/** holds cross-cutting concerns: `config`, `security`, `templates`,
+  `static`.
 - Features are built as **vertical slices**: model + schema + service + api + UI
   together, one domain at a time.
 - CSS is **mobile-first** throughout (base styles target phones; `min-width`
@@ -90,6 +92,7 @@ fitness-app/
 │   ├── core/
 │   │   ├── config.py        # Settings (env/.env); DATABASE_URL, SECRET_KEY, sessions
 │   │   ├── security.py      # bcrypt hash_password / verify_password
+│   │   ├── static.py        # RevalidatedStaticFiles (Cache-Control: no-cache)
 │   │   └── templates.py     # shared Jinja2 + static dir paths
 │   ├── db/
 │   │   ├── base.py          # DeclarativeBase `Base` + enum_column helper
@@ -136,8 +139,11 @@ fitness-app/
 1. **SQLAlchemy ORM + Alembic** — write Python, not SQLite-specific SQL, so the
    SQLite→PostgreSQL move is one config line. Migrations version the schema.
 2. **Config via env vars / `.env`** — 12-factor; `DATABASE_URL` and `SECRET_KEY`
-   never hardcoded. `SECRET_KEY` **refuses to boot with the dev default when
-   `DEBUG=false`**.
+   never hardcoded. With `DEBUG=false` the app **refuses to boot with the dev
+   default `SECRET_KEY` or any key under 32 characters** (a placeholder, an
+   empty `SECRET_KEY=` line, a typed-in password). `.env.example` ships the
+   line commented out, because any value written there is public once the
+   repo is — and it used to hold a `replace-me` that passed the old check.
 3. **Session cookies, not JWT** — simpler and safer for a same-origin web app.
    Cookie is signed (tamper-proof), `HttpOnly` (JS can't read it), `SameSite=lax`
    (basic CSRF defense). Only an opaque `user_id` is stored; everything else is
@@ -358,6 +364,24 @@ fitness-app/
     not the workout. `onLogged` is per opening, so a cancel never marks an
     idea as logged. Ideas aren't persisted (a reload loses them, as with
     meal ideas).
+35. **Static files must be revalidated: `Cache-Control: no-cache` + ETag** —
+    Starlette's `StaticFiles` sends `ETag`/`Last-Modified` but no
+    `Cache-Control`, so browsers guessed a freshness lifetime (typically a
+    tenth of the file's age) and reused scripts *without asking* — the stale
+    asset that bit M9, M10 and M14 testing, and that after a real deploy
+    would leave returning users on old JavaScript. `RevalidatedStaticFiles`
+    (`app/core/static.py`) adds `no-cache` — "store, but check before each
+    use" (not `no-store`) — to every 200 and 304: an unchanged file costs a
+    bodiless `304`, a changed one is always fetched. Chosen over versioned
+    URLs (`app.js?v=hash`) with long-lived caching, because ES-module imports
+    inside our scripts (`import "./api.js"`) are relative and wouldn't carry
+    the version without an import map rewriting every one; content-hashed
+    immutable files would save the revalidation round trips but need a build
+    step this frontend deliberately doesn't have — revisit only behind a CDN
+    at scale. Verified in the browser: on navigation every asset, nested
+    imports included, came back 304, and a file whose ETag changed came back
+    200. Copies cached before the fix carry no header and stay until their
+    guessed lifetime ends or a hard reload — a one-time transition.
 
 ## Coding conventions
 
@@ -398,7 +422,7 @@ fitness-app/
 - Goals depend on today's date (age), so tests that need them read
   `/api/profile/goals` rather than hard-coding numbers that rot on a birthday.
 
-## Completed features (milestones 1–14)
+## Completed features (milestones 1–15)
 
 1. **Foundation** — venv, config system, `/health`, pytest, git.
 2. **DB + auth** — `User` model; register / login / logout / `me`; bcrypt; sessions.
@@ -514,18 +538,49 @@ fitness-app/
     selects, one request in flight, the title/summary/ordered exercises, a
     not-advice disclaimer, and a **Log** button per exercise that opens the
     workout dialog pre-filled (weight left blank) and marks the row "Logged".
+15. **Polish (audit against this guide's own standards, before publishing)**
+    — the chart tooltip was the one `innerHTML` left (only app-controlled
+    values, but against the convention): now built from nodes and text.
+    Remove buttons were 36 px, the one control under the 44 px touch rule:
+    now 2.75rem. Static files are revalidated on every use (decision #35).
+    The `SECRET_KEY` guard also rejects keys under 32 characters, and
+    `.env.example` no longer ships a value (decision #2); it now documents
+    every setting, including the Open Food Facts tuning knobs and the
+    PostgreSQL driver note. `.gitignore` covers `.claude/settings.local.json`.
+    The README was rewritten for GitHub visitors (features, setup including
+    the seed step it was missing, AI opt-in, tests, architecture, design
+    highlights, honest status). Pre-publish check: only source/config/docs
+    tracked; `.env` and `fittrack.db` never committed; no secrets in history.
 
 ## Planned milestones (next → later)
 
-All planned AI features are built. Open items, in no fixed order:
+All planned features are built. The code lives in the owner's **private**
+GitHub repo, [`ariavedikian/Fitness-App`](https://github.com/ariavedikian/Fitness-App)
+(remote `origin`, branch `main`; first pushed 2026-10-10, merged onto the
+repo's own initial README commits rather than force-pushed over them).
 
-- **A deliberate live Claude test** of meal ideas, photo estimates and
-  workout ideas (needs `ANTHROPIC_API_KEY` + `AI_ENABLED=true` in `.env`;
-  a few cents) — see *Current state*.
+### Open for later
+
+In no fixed order; each is the owner's call to start.
+
+- **Live Claude test** of meal ideas, photo estimates and workout ideas —
+  deferred by the owner (no paid key yet). Needs `ANTHROPIC_API_KEY` +
+  `AI_ENABLED=true` in `.env`; a few cents per call. Free partial
+  alternatives: Claude answering the real prompts in a session (validated
+  against the real schemas and shown via the fake launcher), or pasting the
+  prompts into claude.ai — neither proves the API accepts the requests
+  (notably the per-request workout schema). See *Current state*.
 - **Re-check the nav's reset-on-widen** with the Browser pane visible
   (decision #32 — it couldn't be observed while the pane was hidden).
-- **Cache-busting for static assets** (the stale-asset gotcha above).
-- **Later food-data enhancements** — USDA FoodData Central as a second source
+- **GitHub housekeeping:** choose a license before ever making the repo
+  public (none yet, so the README has no license section); add a CI
+  workflow that runs `pytest` on every push.
+- **Run the suite against PostgreSQL** — the "PostgreSQL-ready" claim is
+  untested (everything so far runs on SQLite).
+- **Throttle repeated failed logins** (there's no brute-force protection).
+- **Deployment** (HTTPS, `DEBUG=false`, a real `SECRET_KEY`,
+  `SESSION_HTTPS_ONLY=true`).
+- **Food-data enhancements** — USDA FoodData Central as a second source
   (better whole-food data; needs a free key), and barcode-scan lookup (the OFF
   `fetch_off_product` path already supports barcodes).
 
@@ -571,11 +626,12 @@ assign it to the input with a `DataTransfer`, then dispatch `change`.
 
 ## Current state
 
-- **309 tests passing.** Nine migrations applied (users → profiles → foods →
+- **319 tests passing.** Nine migrations applied (users → profiles → foods →
   log_entries → foods.off_id → exercises → workout_entries → weight_entries →
-  ai_requests). Of Milestones 10–14 only 11e changed the schema (it added
-  `ai_requests`, the rate-limit log); photo estimates reuse `log_entries`,
-  and workout ideas read the existing catalogue and workout log.
+  ai_requests); `alembic check` confirms the models match them. Of
+  Milestones 10–15 only 11e changed the schema (it added `ai_requests`, the
+  rate-limit log); photo estimates reuse `log_entries`, and workout ideas
+  read the existing catalogue and workout log.
 - **External calls in tests are disabled by default** via an autouse `_offline`
   fixture in `tests/conftest.py` (sets `settings.off_enabled` *and*
   `settings.ai_enabled` to `False`); tests that exercise the OFF path re-enable
@@ -607,11 +663,9 @@ assign it to the input with a `DataTransfer`, then dispatch `change`.
     states).
 - A dev-server launch config lives at the **workspace-root** `.claude/launch.json`
   (one level above this repo), used by the browser preview tooling.
-- **Known gap:** static assets (`/static/js/*.js`, CSS) are served by `StaticFiles`
-  with no cache headers, so browsers can run a **stale cached** copy after a change
-  (bit us on dashboard.js in M9 *and* M10 — a plain reload keeps the old module;
-  `import('/static/js/x.js?v='+Date.now())` confirms the fresh one). Needs
-  cache-busting/versioned asset URLs — tracked as a follow-up task.
+- **Stale static assets — resolved in M15** (decision #35): files are served
+  with `Cache-Control: no-cache`, so browsers revalidate them (304 when
+  unchanged) instead of reusing old scripts.
 - **Nav overflow — resolved in M13.** It had made every page ~618 px wide at
   375 px (mobile zoomed the app to ~60%). Now `scrollWidth == clientWidth` at
   375, 600, 768, 900 and 1024 px, including with a 70-character email.
@@ -625,7 +679,7 @@ assign it to the input with a `DataTransfer`, then dispatch `change`.
   be shown before testing anything render-driven. (Viewport *emulation*
   doesn't fire `matchMedia` `change` either; resizing an iframe does.)
 - Milestones 11 (meal recommendations + per-user rate limit, 11a–11e), 12
-  (photo calorie estimation, 12a–12d), 13 (responsive nav) and 14 (workout
-  recommendations, 14a–14d) are complete. **Every planned AI feature is
-  built; next is the owner's pick from the open items under *Planned
-  milestones*.**
+  (photo calorie estimation, 12a–12d), 13 (responsive nav), 14 (workout
+  recommendations, 14a–14d) and 15 (polish, 15a–15e) are complete, and the
+  project is on GitHub (private). **Next: the owner's pick from *Open for
+  later* under *Planned milestones*.**
