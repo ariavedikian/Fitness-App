@@ -277,18 +277,28 @@ export function renderLineChart(container, config) {
     crosshair.setAttribute("x2", px);
     crosshair.removeAttribute("hidden");
 
-    const lines = [`<strong>${formatX(allX[i])}</strong>`];
+    // Built from nodes and text, never innerHTML: labels and values are ours
+    // today, but the chart is reusable, and a label taken from data must
+    // never be parsed as markup.
+    const heading = document.createElement("strong");
+    heading.textContent = formatX(allX[i]);
+    const lines = [heading];
     series.forEach((s, si) => {
       const p = s.points[i];
       highlights[si].setAttribute("cx", sx(p.x));
       highlights[si].setAttribute("cy", sy(p.y));
       highlights[si].removeAttribute("hidden");
-      const swatch = s.label
-        ? `<span class="chart__tooltip-swatch" style="background:${s.color}"></span>${s.label}: `
-        : "";
-      lines.push(`${swatch}${formatValue(p.y)}`);
+      const line = document.createElement("div");
+      if (s.label) {
+        const swatch = document.createElement("span");
+        swatch.className = "chart__tooltip-swatch";
+        swatch.style.background = s.color;
+        line.append(swatch, `${s.label}: `);
+      }
+      line.append(formatValue(p.y));
+      lines.push(line);
     });
-    tooltip.innerHTML = lines.join("<br>");
+    tooltip.replaceChildren(...lines);
     tooltip.hidden = false;
 
     // Position the HTML tooltip over the point, in container px, nudged to
