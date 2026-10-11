@@ -5,7 +5,6 @@ factory so tests can construct fresh, isolated instances.
 """
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api import (
@@ -23,6 +22,7 @@ from app.api import (
     workouts,
 )
 from app.core.config import settings
+from app.core.static import RevalidatedStaticFiles
 from app.core.templates import STATIC_DIR
 
 
@@ -47,7 +47,11 @@ def create_app() -> FastAPI:
         same_site="lax",
     )
 
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    # Revalidated on every use, so a deploy (or an edit in development) is
+    # never hidden behind a stale cached script — see app/core/static.py.
+    app.mount(
+        "/static", RevalidatedStaticFiles(directory=STATIC_DIR), name="static"
+    )
 
     app.include_router(health.router)
     app.include_router(auth.router)
